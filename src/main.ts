@@ -48,7 +48,10 @@ createScreenshotUi(
   },
 );
 
-const hud = createHud(mustEl('fps'), { reversedDepth: app.reversedDepthSupported });
+const hud = createHud(mustEl('fps'), {
+  reversedDepth: app.reversedDepthSupported,
+  rendererMode: app.rendererMode,
+});
 
 // ── IBL toggle ──
 const iblBtn = mustEl<HTMLButtonElement>('iblBtn');

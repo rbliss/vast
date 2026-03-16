@@ -16,7 +16,7 @@ import { createOrbitMovement } from './controls/orbitMovement';
 import { createDprController } from './controls/dprController';
 import { loadTextureSet } from './materials/textureSet';
 import { createTerrainMaterials } from './materials/terrainMaterial';
-import { createSimpleTerrainMaterials } from './materials/simpleMaterial';
+import { createNodeTerrainMaterials } from './materials/terrainMaterialNode';
 import { createChunkSlot, rebuildChunkSlot } from './terrain/chunkGeometry';
 import { createFoliageSystem } from './foliage/foliageSystem';
 import { CHUNK_SIZE, LOD_NEAR, LOD_MID, LOD_FAR, GRID_RADIUS, TERRAIN_ENV_INTENSITY, FOLIAGE_ENV_INTENSITY } from './config';
@@ -94,7 +94,7 @@ export class TerrainApp {
     // WebGPU mode: simple material (no onBeforeCompile)
     // WebGL mode: full biome/triplanar shader
     const { matDisp, matNoDisp } = this.rendererMode === 'webgpu'
-      ? createSimpleTerrainMaterials(this.textures)
+      ? createNodeTerrainMaterials(this.textures)
       : createTerrainMaterials(this.textures);
     if (this._envMap) {
       matDisp.envMap = this._envMap;
