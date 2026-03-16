@@ -11,10 +11,10 @@ import type { DprController } from './controls/dprController';
 import { createRenderer, createScene, createCamera, createLighting } from './core/renderer';
 import { createOrbitMovement } from './controls/orbitMovement';
 import { createDprController } from './controls/dprController';
-import { loadTextureSet } from './materials/textureSet.js';
-import { createTerrainMaterials } from './materials/terrainMaterial.js';
-import { createChunkSlot, rebuildChunkSlot } from './terrain/chunkGeometry.js';
-import { createFoliageSystem } from './foliage/foliageSystem.js';
+import { loadTextureSet } from './materials/textureSet';
+import { createTerrainMaterials } from './materials/terrainMaterial';
+import { createChunkSlot, rebuildChunkSlot } from './terrain/chunkGeometry';
+import { createFoliageSystem } from './foliage/foliageSystem';
 import { CHUNK_SIZE, LOD_NEAR, LOD_MID, LOD_FAR, GRID_RADIUS } from './config';
 
 export class TerrainApp {

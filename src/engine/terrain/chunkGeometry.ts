@@ -10,14 +10,19 @@
  */
 
 import * as THREE from 'three';
+import type { Scene, MeshStandardMaterial, BufferGeometry, BufferAttribute as BA } from 'three';
 import {
   CHUNK_SIZE, SKIRT_DEPTH, SKIRT_INSET, TEXTURE_WORLD_SIZE,
   LOD_NEAR, LOD_MID, LOD_FAR,
-} from '../config.js';
-import { terrainHeight, MACRO_HEIGHT_SCALE } from '../terrainHeight.js';
+} from '../config';
+import type { LodLevel } from '../config';
+import { terrainHeight, MACRO_HEIGHT_SCALE } from '../terrainHeight';
 
 /** One-time slot creation: allocates geometry, topology, mesh. Never freed. */
-export function createChunkSlot(lod, dx, dz, scene, matDisp, matNoDisp) {
+export function createChunkSlot(
+  lod: LodLevel, dx: number, dz: number,
+  scene: Scene, matDisp: MeshStandardMaterial, matNoDisp: MeshStandardMaterial,
+) {
   const seg = lod.segments;
   const gridW = seg + 1;
   const gridVertCount = gridW * gridW;
@@ -115,7 +120,7 @@ export function createChunkSlot(lod, dx, dz, scene, matDisp, matNoDisp) {
 }
 
 /** Compute vertex normals for grid vertices only, ignoring skirt faces. */
-export function computeGridNormals(geo, gridVertCount) {
+export function computeGridNormals(geo: BufferGeometry, gridVertCount: number): void {
   const pos = geo.getAttribute('position');
   const norm = geo.getAttribute('normal');
   const idxArr = geo.getIndex().array;
@@ -155,7 +160,7 @@ export function computeGridNormals(geo, gridVertCount) {
 }
 
 /** Constrain high-res edge vertices to match lower-res neighbor interpolation. */
-export function stitchEdge(pos, edgeVerts, ratio) {
+export function stitchEdge(pos: THREE.BufferAttribute, edgeVerts: number[], ratio: number): void {
   for (let i = 0; i < edgeVerts.length; i++) {
     if (i % ratio !== 0) {
       const prev = Math.floor(i / ratio) * ratio;
@@ -168,13 +173,13 @@ export function stitchEdge(pos, edgeVerts, ratio) {
 }
 
 /** Get LOD for a ring position (clamped to visible grid). */
-export function lodForRingPos(dx, dz) {
+export function lodForRingPos(dx: number, dz: number): LodLevel {
   const d = Math.max(Math.abs(dx), Math.abs(dz));
   return d === 0 ? LOD_NEAR : d === 1 ? LOD_MID : LOD_FAR;
 }
 
 /** Mutate existing buffers in-place. Zero allocation. */
-export function rebuildChunkSlot(slot, centerCX, centerCZ) {
+export function rebuildChunkSlot(slot: any, centerCX: number, centerCZ: number): boolean {
   const cx = centerCX + slot.dx;
   const cz = centerCZ + slot.dz;
   if (cx === slot.cx && cz === slot.cz) return false;

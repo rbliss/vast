@@ -5,11 +5,12 @@
  */
 
 import * as THREE from 'three';
-import { CHUNK_SIZE, GRASS_PER_CHUNK, ROCK_PER_CHUNK, SHRUB_PER_CHUNK } from '../config.js';
-import { terrainHeight, MACRO_HEIGHT_SCALE } from '../terrainHeight.js';
+import type { Scene } from 'three';
+import { CHUNK_SIZE, GRASS_PER_CHUNK, ROCK_PER_CHUNK, SHRUB_PER_CHUNK } from '../config';
+import { terrainHeight, MACRO_HEIGHT_SCALE } from '../terrainHeight';
+import type { FoliagePayload, FoliageSystem } from '../types';
 
-// ── Deterministic hash for placement ──
-function placeHash(x, y) {
+function placeHash(x: number, y: number): number {
   let h = x * 374761393 + y * 668265263;
   h = (h ^ (h >> 13)) * 1274126177;
   return ((h ^ (h >> 16)) >>> 0) / 4294967296;
@@ -54,7 +55,7 @@ function makeShrubGeo() {
  * @param {THREE.Scene} scene - The scene to add instanced meshes to.
  * @returns {{ createInstances: () => object, rebuild: (foliage, cx, cz, isFar) => void }}
  */
-export function createFoliageSystem(scene) {
+export function createFoliageSystem(scene: Scene): FoliageSystem {
   // Singleton geometry + materials, created once per system
   const grassGeo = makeGrassGeo();
   const rockGeo  = makeRockGeo();
@@ -67,7 +68,7 @@ export function createFoliageSystem(scene) {
   const _dummy = new THREE.Object3D();
 
   /** Create persistent InstancedMesh trio for a slot. Returns instance payload. */
-  function createInstances() {
+  function createInstances(): FoliagePayload {
     const grass = new THREE.InstancedMesh(grassGeo, grassMat, GRASS_PER_CHUNK);
     const rock  = new THREE.InstancedMesh(rockGeo, rockMat, ROCK_PER_CHUNK);
     const shrub = new THREE.InstancedMesh(shrubGeo, shrubMat, SHRUB_PER_CHUNK);
@@ -79,7 +80,7 @@ export function createFoliageSystem(scene) {
   }
 
   /** Regenerate foliage transforms for a slot. Deterministic from (cx, cz). */
-  function rebuild(foliage, cx, cz, isFar) {
+  function rebuild(foliage: FoliagePayload, cx: number, cz: number, isFar: boolean): void {
     if (isFar) {
       foliage.grass.count = 0;
       foliage.rock.count = 0;

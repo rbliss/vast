@@ -9,15 +9,12 @@
  */
 
 import * as THREE from 'three';
-import { CHUNK_SIZE, ROCK_WORLD_SIZE, GRASS_WORLD_SIZE, DIRT_WORLD_SIZE } from '../config.js';
+import type { MeshStandardMaterial } from 'three';
+import { CHUNK_SIZE, ROCK_WORLD_SIZE, GRASS_WORLD_SIZE, DIRT_WORLD_SIZE } from '../config';
+import type { TextureSet, TerrainMaterials } from '../types';
 
-/**
- * Create terrain materials (with and without displacement).
- * @param {object} textures — texture set from loadTextureSet()
- * @returns {{ matDisp: Material, matNoDisp: Material }}
- */
-export function createTerrainMaterials(textures) {
-  function makeMat(useDisplacement) {
+export function createTerrainMaterials(textures: TextureSet): TerrainMaterials {
+  function makeMat(useDisplacement: boolean): MeshStandardMaterial {
     const mat = new THREE.MeshStandardMaterial({
       map: textures.rockDiff,
       normalMap: textures.rockNorm,
@@ -44,8 +41,8 @@ export function createTerrainMaterials(textures) {
   return { matDisp, matNoDisp };
 }
 
-function applyBiomeShader(material, tex) {
-  material.onBeforeCompile = (shader) => {
+function applyBiomeShader(material: MeshStandardMaterial, tex: TextureSet): void {
+  material.onBeforeCompile = (shader: any) => {
     shader.uniforms.rockScale    = { value: 1.0 / ROCK_WORLD_SIZE };
     shader.uniforms.grassScale   = { value: 1.0 / GRASS_WORLD_SIZE };
     shader.uniforms.dirtScale    = { value: 1.0 / DIRT_WORLD_SIZE };
