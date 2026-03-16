@@ -51,36 +51,49 @@ The project is organized around a few core systems:
 - **three.js**
 - **Python server** for screenshot upload / verification API
 - **Poly Haven** terrain textures
-- **Vite migration in progress** to split the engine into reusable modules and keep the frontend framework-agnostic
+- **Vite** for modular ES module builds and dev server
 
 ## Running
 
-Both services run as systemd units and start on boot:
+### Production / this host
+
+The app runs as two systemd services:
+
+- **terrain-vite** — frontend on `http://beyond-all-reason:8080/`
+- **terrain-api** — screenshot API on `:8081`, proxied through Vite at `/api/*`
+
+Useful commands:
 
 ```bash
-# Services are already enabled. To restart manually:
-sudo systemctl restart terrain-api terrain-vite
+sudo systemctl status terrain-vite terrain-api
+sudo systemctl restart terrain-vite terrain-api
 ```
 
-- **Vite frontend** on `:8080` — `http://beyond-all-reason:8080/`
-- **Screenshot API** on `:8081` — proxied through Vite at `/api/*`
-
-### Manual dev (without systemd)
+### Local dev
 
 ```bash
-PORT=8081 python3 server.py &   # screenshot API on 8081
-npm run dev                      # Vite on 8080, proxies /api/* to 8081
+PORT=8081 python3 server.py &
+npm run dev
 ```
 
-### Standalone fallback (no Vite)
+Then open:
+
+- `http://localhost:8080/` — Vite app
+- `http://localhost:8080/api/screenshots` — proxied screenshot API
+
+### Legacy standalone fallback
+
+If you want the old non-Vite page:
 
 ```bash
-PORT=8080 python3 server.py    # serves standalone.html on :8080
+PORT=8081 python3 server.py
 ```
 
-Then open `http://localhost:8080/standalone.html`.
+Then open:
 
-Useful query params:
+- `http://localhost:8081/standalone.html`
+
+### Query params
 
 - `?debug` — enable debug helpers / screenshot-oriented behavior
 - `?dpr=auto`
