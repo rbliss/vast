@@ -238,8 +238,8 @@
       }
     }
 
-    // Initial setup
-    applyDpr(dprCtrl.current);
+    // Initial setup — force-apply even if current matches (bypass no-op guard)
+    renderer.setPixelRatio(dprCtrl.current);
     renderer.setSize(window.innerWidth, window.innerHeight);
 
     const scene = new THREE.Scene();
