@@ -27,9 +27,9 @@ const _grad = [[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
   for (let i = 0; i < 512; i++) _perm[i] = _p[i] & 7;
 })();
 
-function dot2(g, x, y) { return g[0]*x + g[1]*y; }
+function dot2(g: number[], x: number, y: number): number { return g[0]*x + g[1]*y; }
 
-export function noise2D(x, y) {
+export function noise2D(x: number, y: number): number {
   const F2 = 0.5*(Math.sqrt(3)-1), G2 = (3-Math.sqrt(3))/6;
   const s = (x+y)*F2;
   const i = Math.floor(x+s), j = Math.floor(y+s);
@@ -53,7 +53,7 @@ export function noise2D(x, y) {
   return 70*(n0+n1+n2);
 }
 
-export function fbm(x, y, octaves, lacunarity, gain) {
+export function fbm(x: number, y: number, octaves: number, lacunarity: number, gain: number): number {
   let sum = 0, amp = 1, freq = 1, maxAmp = 0;
   for (let i = 0; i < octaves; i++) {
     sum += noise2D(x * freq, y * freq) * amp;
@@ -64,7 +64,7 @@ export function fbm(x, y, octaves, lacunarity, gain) {
   return sum / maxAmp;
 }
 
-export function ridgedFBM(x, y, octaves, lacunarity, gain) {
+export function ridgedFBM(x: number, y: number, octaves: number, lacunarity: number, gain: number): number {
   let sum = 0, amp = 1, freq = 1, prev = 1, maxAmp = 0;
   for (let i = 0; i < octaves; i++) {
     let n = Math.abs(noise2D(x * freq, y * freq));

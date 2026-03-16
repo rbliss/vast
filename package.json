@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 8080 --strictPort",
     "api": "node api-server.cjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0"
   },

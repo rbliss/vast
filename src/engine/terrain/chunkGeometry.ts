@@ -16,6 +16,7 @@ import {
   LOD_NEAR, LOD_MID, LOD_FAR,
 } from '../config';
 import type { LodLevel } from '../config';
+import type { ChunkSlot } from '../types';
 import { terrainHeight, MACRO_HEIGHT_SCALE } from '../terrainHeight';
 
 /** One-time slot creation: allocates geometry, topology, mesh. Never freed. */
@@ -78,7 +79,7 @@ export function createChunkSlot(
   // Build permanent index buffer: grid triangles + skirt quads
   let skirtTriCount = 0;
   for (const e of edges) skirtTriCount += (e.length - 1) * 2;
-  const oldIdxArr = tmpIdx.array;
+  const oldIdxArr = tmpIdx!.array;
   const idxArr = new Uint32Array(oldIdxArr.length + skirtTriCount * 3);
   idxArr.set(oldIdxArr);
 
@@ -123,7 +124,7 @@ export function createChunkSlot(
 export function computeGridNormals(geo: BufferGeometry, gridVertCount: number): void {
   const pos = geo.getAttribute('position');
   const norm = geo.getAttribute('normal');
-  const idxArr = geo.getIndex().array;
+  const idxArr = geo.getIndex()!.array;
 
   // Zero grid normals
   for (let i = 0; i < gridVertCount * 3; i++) norm.array[i] = 0;
@@ -179,7 +180,7 @@ export function lodForRingPos(dx: number, dz: number): LodLevel {
 }
 
 /** Mutate existing buffers in-place. Zero allocation. */
-export function rebuildChunkSlot(slot: any, centerCX: number, centerCZ: number): boolean {
+export function rebuildChunkSlot(slot: ChunkSlot, centerCX: number, centerCZ: number): boolean {
   const cx = centerCX + slot.dx;
   const cz = centerCZ + slot.dz;
   if (cx === slot.cx && cz === slot.cz) return false;
@@ -189,9 +190,9 @@ export function rebuildChunkSlot(slot: any, centerCX: number, centerCZ: number):
   const originX = cx * CHUNK_SIZE;
   const originZ = cz * CHUNK_SIZE;
 
-  const pos  = slot.geo.getAttribute('position');
-  const uv   = slot.geo.getAttribute('uv');
-  const uv2  = slot.geo.getAttribute('uv2');
+  const pos  = slot.geo.getAttribute('position') as THREE.BufferAttribute;
+  const uv   = slot.geo.getAttribute('uv') as THREE.BufferAttribute;
+  const uv2  = slot.geo.getAttribute('uv2') as THREE.BufferAttribute;
 
   // Update grid vertices: Y from heightfield, UVs from world pos
   for (let i = 0; i < slot.gridVertCount; i++) {
