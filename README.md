@@ -75,8 +75,10 @@ npm run dev                      # Vite on 8080, proxies /api/* to 8081
 ### Standalone fallback (no Vite)
 
 ```bash
-python3 server.py    # serves standalone.html on default port
+PORT=8080 python3 server.py    # serves standalone.html on :8080
 ```
+
+Then open `http://localhost:8080/standalone.html`.
 
 Useful query params:
 
