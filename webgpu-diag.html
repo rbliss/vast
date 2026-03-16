@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html><head><title>WebGPU Diagnostics</title>
+<style>body{font:14px/1.6 monospace;padding:20px;background:#1a1a2e;color:#e0e0e0}
+.ok{color:#4ade80}.warn{color:#fbbf24}.fail{color:#f87171}pre{background:#111;padding:12px;border-radius:6px;overflow-x:auto}</style>
+</head><body>
+<h2>WebGPU Diagnostics</h2>
+<div id="results">Running checks...</div>
+<script>
+async function run() {
+  const r = document.getElementById('results');
+  const lines = [];
+  const add = (label, value, cls) => lines.push(`<div class="${cls}"><b>${label}:</b> ${value}</div>`);
+
+  add('Origin', location.origin, '');
+  add('Protocol', location.protocol, location.protocol === 'https:' ? 'ok' : 'warn');
+  add('Secure context', window.isSecureContext, window.isSecureContext ? 'ok' : 'fail');
+  add('User agent', navigator.userAgent.split(') ').pop(), '');
+
+  if (!navigator.gpu) {
+    add('navigator.gpu', 'NOT PRESENT', 'fail');
+    add('Diagnosis', 'WebGPU API not exposed. Likely: insecure context, or browser lacks support.', 'fail');
+    r.innerHTML = lines.join('');
+    return;
+  }
+  add('navigator.gpu', 'present', 'ok');
+
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) {
+      add('requestAdapter()', 'returned null — no suitable GPU adapter', 'fail');
+      r.innerHTML = lines.join('');
+      return;
+    }
+    add('requestAdapter()', 'success', 'ok');
+
+    const info = adapter.info || {};
+    add('Adapter vendor', info.vendor || 'unknown', '');
+    add('Adapter architecture', info.architecture || 'unknown', '');
+    add('Adapter device', info.device || 'unknown', '');
+    add('Adapter description', info.description || 'unknown', '');
+
+    const features = [...adapter.features].sort();
+    add('Feature count', features.length, 'ok');
+    add('Features', '', '');
+    lines.push(`<pre>${features.join('\n')}</pre>`);
+
+    const device = await adapter.requestDevice();
+    add('requestDevice()', 'success', 'ok');
+    add('Max buffer size', device.limits.maxBufferSize, '');
+    add('Max texture 2D', device.limits.maxTextureDimension2D, '');
+    device.destroy();
+
+    add('Conclusion', 'WebGPU is fully available!', 'ok');
+  } catch (err) {
+    add('Error', err.message, 'fail');
+  }
+  r.innerHTML = lines.join('');
+}
+run();
+</script></body></html>
