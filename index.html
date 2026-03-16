@@ -216,159 +216,197 @@
     const dirtRough  = loadTex('textures/brown_mud_leaves_01_rough_1k.jpg');
 
     // ═══════════════════════════════════════════════════════
-    // Chunked LOD terrain
+    // Fixed-pool chunked LOD terrain (V7)
+    // 25 permanent slots, zero allocation during traversal
     // ═══════════════════════════════════════════════════════
-    const chunkSize = 40;                  // world units per chunk
-    const gridRadius = 2;                  // -2..+2 = 5×5 visible grid
-    const skirtDepth = 3.0;               // skirt drop in world units
+    const chunkSize = 40;
+    const skirtDepth = 3.0;
+    const inset = 0.05;
 
-    // LOD levels by Chebyshev distance from camera chunk
     const LOD_NEAR = { segments: 128, displacement: true };
     const LOD_MID  = { segments: 48,  displacement: true };
     const LOD_FAR  = { segments: 24,  displacement: false };
 
-    function getLOD(d) {
-      if (d === 0) return LOD_NEAR;
-      if (d === 1) return LOD_MID;
-      return LOD_FAR;
-    }
-
-    /** Build a LOCAL-SPACE chunk geometry. Mesh.position provides world offset. */
-    function createLocalChunkGeo(originX, originZ, lod) {
+    /** One-time slot creation: allocates geometry, topology, mesh. Never freed. */
+    function createChunkSlot(lod, dx, dz) {
       const seg = lod.segments;
-      const geo = new THREE.PlaneGeometry(chunkSize, chunkSize, seg, seg);
-      geo.rotateX(-Math.PI / 2);
-
-      const pos = geo.getAttribute('position');
-      const uv = geo.getAttribute('uv');
       const gridW = seg + 1;
+      const gridVertCount = gridW * gridW;
 
-      // Keep local X/Z, set Y from heightfield, world-space UVs
-      for (let i = 0; i < pos.count; i++) {
-        const lx = pos.getX(i);
-        const lz = pos.getZ(i);
-        const wx = lx + originX;
-        const wz = lz + originZ;
-        pos.setY(i, terrainHeight(wx, wz) * macroHeightScale);
-        uv.setXY(i, wx / textureWorldSize, wz / textureWorldSize);
-      }
-      pos.needsUpdate = true;
-      uv.needsUpdate = true;
-      geo.computeVertexNormals();
+      // Build base plane for local X/Z coords
+      const tmpGeo = new THREE.PlaneGeometry(chunkSize, chunkSize, seg, seg);
+      tmpGeo.rotateX(-Math.PI / 2);
+      const tmpPos = tmpGeo.getAttribute('position');
+      const tmpIdx = tmpGeo.getIndex();
 
-      // ── Add skirts around all 4 edges ──
-      addSkirts(geo, gridW, skirtDepth);
-
-      geo.setAttribute('uv2', geo.getAttribute('uv').clone());
-      return geo;
-    }
-
-    /** Add vertical skirt geometry around chunk edges to hide LOD cracks */
-    function addSkirts(geo, gridW, depth) {
-      const oldPos = geo.getAttribute('position');
-      const oldUv = geo.getAttribute('uv');
-      const oldNorm = geo.getAttribute('normal');
-      const oldIdx = geo.getIndex();
-      const oldVertCount = oldPos.count;
-
-      // Compute chunk center for inward nudging
-      let cx = 0, cz = 0;
-      for (let i = 0; i < oldVertCount; i++) {
-        cx += oldPos.getX(i);
-        cz += oldPos.getZ(i);
-      }
-      cx /= oldVertCount;
-      cz /= oldVertCount;
-      const inset = 0.05; // small inward nudge to hide skirts behind terrain
-
-      // Collect edge vertex indices for each side
+      // Compute edge indices (4 edges)
       const edges = [];
-      // Top edge (first row, left→right)
       const top = []; for (let c = 0; c < gridW; c++) top.push(c);
       edges.push(top);
-      // Right edge (last col, top→bottom)
       const right = []; for (let r = 0; r < gridW; r++) right.push(r * gridW + gridW - 1);
       edges.push(right);
-      // Bottom edge (last row, right→left)
       const bot = []; for (let c = gridW - 1; c >= 0; c--) bot.push((gridW - 1) * gridW + c);
       edges.push(bot);
-      // Left edge (first col, bottom→top)
       const left = []; for (let r = gridW - 1; r >= 0; r--) left.push(r * gridW);
       edges.push(left);
 
-      // Count total edge vertices (corners appear twice, that's OK)
-      let totalEdgeVerts = 0;
-      for (const e of edges) totalEdgeVerts += e.length;
+      // Flatten edge indices → skirt vertex mapping
+      const edgeIndices = [];
+      for (const e of edges) edgeIndices.push(...e);
+      const skirtVertCount = edgeIndices.length;
+      const totalVertCount = gridVertCount + skirtVertCount;
 
-      const newVertCount = oldVertCount + totalEdgeVerts;
-      const newPos = new Float32Array(newVertCount * 3);
-      const newUv = new Float32Array(newVertCount * 2);
-      const newNorm = new Float32Array(newVertCount * 3);
+      // Allocate permanent arrays
+      const posArr  = new Float32Array(totalVertCount * 3);
+      const uvArr   = new Float32Array(totalVertCount * 2);
+      const normArr = new Float32Array(totalVertCount * 3);
+      const uv2Arr  = new Float32Array(totalVertCount * 2);
 
-      // Copy existing data
-      for (let i = 0; i < oldVertCount; i++) {
-        newPos[i*3]   = oldPos.getX(i);
-        newPos[i*3+1] = oldPos.getY(i);
-        newPos[i*3+2] = oldPos.getZ(i);
-        newUv[i*2]    = oldUv.getX(i);
-        newUv[i*2+1]  = oldUv.getY(i);
-        newNorm[i*3]   = oldNorm.getX(i);
-        newNorm[i*3+1] = oldNorm.getY(i);
-        newNorm[i*3+2] = oldNorm.getZ(i);
+      // Write fixed local X/Z for grid vertices
+      for (let i = 0; i < gridVertCount; i++) {
+        posArr[i * 3]     = tmpPos.getX(i);
+        posArr[i * 3 + 1] = 0;
+        posArr[i * 3 + 2] = tmpPos.getZ(i);
       }
 
-      // Count skirt triangles
+      // Write fixed local X/Z for skirt vertices (inward-nudged)
+      for (let i = 0; i < skirtVertCount; i++) {
+        const ei = edgeIndices[i];
+        const ex = tmpPos.getX(ei), ez = tmpPos.getZ(ei);
+        const ndx = -ex, ndz = -ez; // toward center (0,0)
+        const len = Math.sqrt(ndx * ndx + ndz * ndz) || 1;
+        const ni = gridVertCount + i;
+        posArr[ni * 3]     = ex + (ndx / len) * inset;
+        posArr[ni * 3 + 1] = 0;
+        posArr[ni * 3 + 2] = ez + (ndz / len) * inset;
+      }
+
+      // Build permanent index buffer: grid triangles + skirt quads
       let skirtTriCount = 0;
       for (const e of edges) skirtTriCount += (e.length - 1) * 2;
+      const oldIdxArr = tmpIdx.array;
+      const idxArr = new Uint32Array(oldIdxArr.length + skirtTriCount * 3);
+      idxArr.set(oldIdxArr);
 
-      const oldIdxArr = oldIdx.array;
-      const newIdxArr = new Uint32Array(oldIdxArr.length + skirtTriCount * 3);
-      newIdxArr.set(oldIdxArr);
       let idxPtr = oldIdxArr.length;
-      let skirtBase = oldVertCount;
-
+      let skirtBase = gridVertCount;
       for (const edge of edges) {
-        // Create lowered copies of this edge's vertices, nudged inward
-        for (let i = 0; i < edge.length; i++) {
-          const ei = edge[i];
-          const ni = skirtBase + i;
-          const ex = oldPos.getX(ei);
-          const ez = oldPos.getZ(ei);
-          // Nudge toward chunk center so skirt hides behind terrain shell
-          const dx = cx - ex, dz = cz - ez;
-          const len = Math.sqrt(dx * dx + dz * dz) || 1;
-          newPos[ni*3]   = ex + (dx / len) * inset;
-          newPos[ni*3+1] = oldPos.getY(ei) - depth;
-          newPos[ni*3+2] = ez + (dz / len) * inset;
-          newUv[ni*2]    = oldUv.getX(ei);
-          newUv[ni*2+1]  = oldUv.getY(ei);
-          // Skirt normals point straight down — prevents light catching
-          newNorm[ni*3]   = 0;
-          newNorm[ni*3+1] = -1;
-          newNorm[ni*3+2] = 0;
-        }
-
-        // Create quads connecting edge to skirt
         for (let i = 0; i < edge.length - 1; i++) {
-          const a = edge[i];              // top current
-          const b = edge[i + 1];          // top next
-          const c = skirtBase + i + 1;    // bottom next
-          const d = skirtBase + i;        // bottom current
-          newIdxArr[idxPtr++] = a;
-          newIdxArr[idxPtr++] = d;
-          newIdxArr[idxPtr++] = c;
-          newIdxArr[idxPtr++] = a;
-          newIdxArr[idxPtr++] = c;
-          newIdxArr[idxPtr++] = b;
+          const a = edge[i], b = edge[i + 1];
+          const c = skirtBase + i + 1, d = skirtBase + i;
+          idxArr[idxPtr++] = a; idxArr[idxPtr++] = d; idxArr[idxPtr++] = c;
+          idxArr[idxPtr++] = a; idxArr[idxPtr++] = c; idxArr[idxPtr++] = b;
         }
-
         skirtBase += edge.length;
       }
 
-      geo.setAttribute('position', new THREE.BufferAttribute(newPos, 3));
-      geo.setAttribute('uv', new THREE.BufferAttribute(newUv, 2));
-      geo.setAttribute('normal', new THREE.BufferAttribute(newNorm, 3));
-      geo.setIndex(new THREE.BufferAttribute(newIdxArr, 1));
+      // Create permanent geometry
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+      geo.setAttribute('uv',       new THREE.BufferAttribute(uvArr, 2));
+      geo.setAttribute('normal',   new THREE.BufferAttribute(normArr, 3));
+      geo.setAttribute('uv2',      new THREE.BufferAttribute(uv2Arr, 2));
+      geo.setIndex(new THREE.BufferAttribute(idxArr, 1));
+
+      // Create permanent mesh
+      const mat = lod.displacement ? matDisp : matNoDisp;
+      const mesh = new THREE.Mesh(geo, mat);
+      scene.add(mesh);
+
+      tmpGeo.dispose();
+
+      return {
+        dx, dz, lod, mesh, geo,
+        gridW, gridVertCount, skirtVertCount, totalVertCount,
+        edgeIndices,
+        cx: Infinity, cz: Infinity,
+      };
+    }
+
+    /** Compute vertex normals for grid vertices only, ignoring skirt faces. */
+    function computeGridNormals(geo, gridVertCount) {
+      const pos = geo.getAttribute('position');
+      const norm = geo.getAttribute('normal');
+      const idxArr = geo.getIndex().array;
+
+      // Zero grid normals
+      for (let i = 0; i < gridVertCount * 3; i++) norm.array[i] = 0;
+
+      // Accumulate face normals — skip any face touching a skirt vertex
+      for (let f = 0; f < idxArr.length; f += 3) {
+        const a = idxArr[f], b = idxArr[f + 1], c = idxArr[f + 2];
+        if (a >= gridVertCount || b >= gridVertCount || c >= gridVertCount) continue;
+
+        const ax = pos.getX(a), ay = pos.getY(a), az = pos.getZ(a);
+        const e1x = pos.getX(b) - ax, e1y = pos.getY(b) - ay, e1z = pos.getZ(b) - az;
+        const e2x = pos.getX(c) - ax, e2y = pos.getY(c) - ay, e2z = pos.getZ(c) - az;
+        const nx = e1y * e2z - e1z * e2y;
+        const ny = e1z * e2x - e1x * e2z;
+        const nz = e1x * e2y - e1y * e2x;
+
+        const na = norm.array;
+        na[a*3] += nx; na[a*3+1] += ny; na[a*3+2] += nz;
+        na[b*3] += nx; na[b*3+1] += ny; na[b*3+2] += nz;
+        na[c*3] += nx; na[c*3+1] += ny; na[c*3+2] += nz;
+      }
+
+      // Normalize grid, set skirt normals to (0,-1,0)
+      const na = norm.array;
+      for (let i = 0; i < gridVertCount; i++) {
+        const x = na[i*3], y = na[i*3+1], z = na[i*3+2];
+        const len = Math.sqrt(x*x + y*y + z*z) || 1;
+        na[i*3] = x/len; na[i*3+1] = y/len; na[i*3+2] = z/len;
+      }
+      for (let i = gridVertCount; i < pos.count; i++) {
+        na[i*3] = 0; na[i*3+1] = -1; na[i*3+2] = 0;
+      }
+      norm.needsUpdate = true;
+    }
+
+    /** Mutate existing buffers in-place. Zero allocation. */
+    function rebuildChunkSlot(slot, centerCX, centerCZ) {
+      const cx = centerCX + slot.dx;
+      const cz = centerCZ + slot.dz;
+      if (cx === slot.cx && cz === slot.cz) return false;
+      slot.cx = cx;
+      slot.cz = cz;
+
+      const originX = cx * chunkSize;
+      const originZ = cz * chunkSize;
+
+      const pos  = slot.geo.getAttribute('position');
+      const uv   = slot.geo.getAttribute('uv');
+      const uv2  = slot.geo.getAttribute('uv2');
+
+      // Update grid vertices: Y from heightfield, UVs from world pos
+      for (let i = 0; i < slot.gridVertCount; i++) {
+        const lx = pos.getX(i), lz = pos.getZ(i);
+        const wx = lx + originX, wz = lz + originZ;
+        pos.setY(i, terrainHeight(wx, wz) * macroHeightScale);
+        const u = wx / textureWorldSize, v = wz / textureWorldSize;
+        uv.setXY(i, u, v);
+        uv2.setXY(i, u, v);
+      }
+
+      // Update skirt vertices: Y = edge Y - depth, UV = edge UV
+      for (let i = 0; i < slot.skirtVertCount; i++) {
+        const ei = slot.edgeIndices[i];
+        const ni = slot.gridVertCount + i;
+        pos.setY(ni, pos.getY(ei) - skirtDepth);
+        uv.setXY(ni, uv.getX(ei), uv.getY(ei));
+        uv2.setXY(ni, uv.getX(ei), uv.getY(ei));
+      }
+
+      pos.needsUpdate = true;
+      uv.needsUpdate = true;
+      uv2.needsUpdate = true;
+
+      // Compute normals for grid only — skirt faces excluded
+      computeGridNormals(slot.geo, slot.gridVertCount);
+
+      slot.mesh.position.set(originX, 0, originZ);
+      slot.geo.computeBoundingSphere();
+      return true;
     }
 
     // ───── Materials: near/mid share one, far has no displacement ─────
@@ -616,71 +654,40 @@
     applyBiomeShader(matNoDisp);
 
     // ═══════════════════════════════════════════════════════
-    // Camera-centered chunk pool with recycling
+    // Fixed 25-slot ring — zero allocation during traversal
     // ═══════════════════════════════════════════════════════
-    const chunkMap = new Map(); // "cx,cz" → { mesh, lod, cx, cz }
-    let centerCX = Infinity, centerCZ = Infinity; // force initial build
+    const slots = [];
+    let centerCX = Infinity, centerCZ = Infinity;
 
-    function chunkKey(cx, cz) { return `${cx},${cz}`; }
-
-    function spawnChunk(cx, cz, lod) {
-      const originX = cx * chunkSize;
-      const originZ = cz * chunkSize;
-      const geo = createLocalChunkGeo(originX, originZ, lod);
-      const mat = lod.displacement ? matDisp : matNoDisp;
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(originX, 0, originZ);
-      scene.add(mesh);
-      return { mesh, lod, cx, cz };
+    // Build ring offsets: near(1) + mid(8) + far(16) = 25 slots
+    function buildSlots() {
+      for (let dz = -2; dz <= 2; dz++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const d = Math.max(Math.abs(dx), Math.abs(dz));
+          const lod = d === 0 ? LOD_NEAR : d === 1 ? LOD_MID : LOD_FAR;
+          slots.push(createChunkSlot(lod, dx, dz));
+        }
+      }
+      console.log(`[terrain] ${slots.length} permanent slots created`);
     }
 
     function updateChunks() {
-      // Determine which chunk cell the camera is over
       const camCX = Math.round(controls.target.x / chunkSize);
       const camCZ = Math.round(controls.target.z / chunkSize);
-
       if (camCX === centerCX && camCZ === centerCZ) return;
       centerCX = camCX;
       centerCZ = camCZ;
 
-      // Compute new visible set with LOD
-      const newVisible = new Map();
-      for (let dz = -gridRadius; dz <= gridRadius; dz++) {
-        for (let dx = -gridRadius; dx <= gridRadius; dx++) {
-          const cx = camCX + dx, cz = camCZ + dz;
-          const d = Math.max(Math.abs(dx), Math.abs(dz));
-          newVisible.set(chunkKey(cx, cz), { cx, cz, lod: getLOD(d) });
-        }
+      let rebuilt = 0;
+      for (const slot of slots) {
+        if (rebuildChunkSlot(slot, centerCX, centerCZ)) rebuilt++;
       }
-
-      // Remove chunks no longer visible
-      for (const [key, slot] of chunkMap) {
-        if (!newVisible.has(key)) {
-          scene.remove(slot.mesh);
-          slot.mesh.geometry.dispose();
-          chunkMap.delete(key);
-        }
+      if (rebuilt > 0) {
+        console.log(`[terrain] rebuilt ${rebuilt} slots, center: (${centerCX}, ${centerCZ})`);
       }
-
-      // Add new chunks / update LOD on existing
-      for (const [key, info] of newVisible) {
-        const existing = chunkMap.get(key);
-        if (existing) {
-          // If LOD changed, rebuild
-          if (existing.lod !== info.lod) {
-            scene.remove(existing.mesh);
-            existing.mesh.geometry.dispose();
-            chunkMap.set(key, spawnChunk(info.cx, info.cz, info.lod));
-          }
-        } else {
-          chunkMap.set(key, spawnChunk(info.cx, info.cz, info.lod));
-        }
-      }
-
-      console.log(`[terrain] chunks: ${chunkMap.size}, center: (${camCX}, ${camCZ})`);
     }
 
-    // Initial build
+    buildSlots();
     updateChunks();
 
     // ───── Resize ─────
@@ -718,7 +725,7 @@
     }
 
     animate();
-    console.log('[terrain] v6 — infinite streaming + chunk recycling');
+    console.log('[terrain] v7 — fixed 25-slot pool, zero-alloc traversal');
   </script>
 </body>
 </html>
