@@ -9,20 +9,34 @@ interface RendererOpts {
   preserveDrawingBuffer?: boolean;
 }
 
+export interface RendererResult {
+  renderer: WebGLRenderer;
+  reversedDepthSupported: boolean;
+}
+
 interface Lighting {
   sun: DirectionalLight;
   hemi: HemisphereLight;
   fill: DirectionalLight;
 }
 
-export function createRenderer(opts: RendererOpts = {}): WebGLRenderer {
+export function createRenderer(opts: RendererOpts = {}): RendererResult {
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
     preserveDrawingBuffer: opts.preserveDrawingBuffer || false,
+    reversedDepthBuffer: true,
   });
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
-  return renderer;
+
+  const reversedDepthSupported = renderer.capabilities.reversedDepthBuffer === true;
+  if (reversedDepthSupported) {
+    console.log('[renderer] reversed depth buffer enabled');
+  } else {
+    console.log('[renderer] reversed depth buffer not supported, using standard depth');
+  }
+
+  return { renderer, reversedDepthSupported };
 }
 
 export function createScene(): Scene {

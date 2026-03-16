@@ -45,7 +45,7 @@ createScreenshotUi(
   },
 );
 
-const hud = createHud(mustEl('fps'));
+const hud = createHud(mustEl('fps'), { reversedDepth: app.reversedDepthSupported });
 
 // ── Resize ──
 window.addEventListener('resize', () => {
@@ -73,4 +73,4 @@ function animate() {
 }
 
 animate();
-console.log(`[terrain] v10.3 — strict TS (mode: ${app.dpr.ctrl.mode})`);
+console.log(`[terrain] v11.0 — revZ: ${app.reversedDepthSupported} (mode: ${app.dpr.ctrl.mode})`);

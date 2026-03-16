@@ -20,6 +20,7 @@ import { CHUNK_SIZE, LOD_NEAR, LOD_MID, LOD_FAR, GRID_RADIUS } from './config';
 export class TerrainApp {
   readonly debug: boolean;
   readonly renderer: WebGLRenderer;
+  readonly reversedDepthSupported: boolean;
   readonly scene: Scene;
   readonly camera: PerspectiveCamera;
   readonly controls: OrbitControls;
@@ -39,7 +40,9 @@ export class TerrainApp {
   constructor(container: HTMLElement, opts: TerrainAppOptions = {}) {
     this.debug = opts.debug || false;
 
-    this.renderer = createRenderer({ preserveDrawingBuffer: this.debug });
+    const { renderer, reversedDepthSupported } = createRenderer({ preserveDrawingBuffer: this.debug });
+    this.renderer = renderer;
+    this.reversedDepthSupported = reversedDepthSupported;
     this.scene = createScene();
     this.camera = createCamera(window.innerWidth / window.innerHeight);
     createLighting(this.scene);

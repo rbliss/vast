@@ -1,5 +1,5 @@
 /**
- * HUD: FPS counter + DPR info display.
+ * HUD: FPS counter + DPR + revZ info display.
  */
 
 import type { DprCtrlState } from '../engine/controls/dprController';
@@ -9,10 +9,15 @@ export interface HudTickResult {
   elapsed: number;
 }
 
-export function createHud(fpsEl: HTMLElement) {
+export interface HudOpts {
+  reversedDepth?: boolean;
+}
+
+export function createHud(fpsEl: HTMLElement, opts: HudOpts = {}) {
   let frameCount = 0;
   let lastTime = performance.now();
   let lastFps = 0;
+  const revZTag = opts.reversedDepth ? ' | revZ' : '';
 
   function tick(now: number, dprCtrl: DprCtrlState): HudTickResult | null {
     frameCount++;
@@ -22,7 +27,7 @@ export function createHud(fpsEl: HTMLElement) {
       const dprInfo = dprCtrl.mode === 'auto'
         ? ` | dpr ${dprCtrl.current.toFixed(2)} | auto`
         : ` | dpr ${dprCtrl.current.toFixed(2)}`;
-      fpsEl.textContent = `${lastFps.toFixed(0)} fps${dprInfo}`;
+      fpsEl.textContent = `${lastFps.toFixed(0)} fps${dprInfo}${revZTag}`;
       frameCount = 0;
       lastTime = now;
       return { fps: lastFps, elapsed };
