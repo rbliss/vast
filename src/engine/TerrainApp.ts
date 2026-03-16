@@ -9,13 +9,14 @@ import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, 
 import type { DprController } from './controls/dprController';
 
 import { createRenderer, createScene, createCamera, createLighting } from './core/renderer';
+import { createEnvironment } from './core/environment';
 import { createOrbitMovement } from './controls/orbitMovement';
 import { createDprController } from './controls/dprController';
 import { loadTextureSet } from './materials/textureSet';
 import { createTerrainMaterials } from './materials/terrainMaterial';
 import { createChunkSlot, rebuildChunkSlot } from './terrain/chunkGeometry';
 import { createFoliageSystem } from './foliage/foliageSystem';
-import { CHUNK_SIZE, LOD_NEAR, LOD_MID, LOD_FAR, GRID_RADIUS } from './config';
+import { CHUNK_SIZE, LOD_NEAR, LOD_MID, LOD_FAR, GRID_RADIUS, TERRAIN_ENV_INTENSITY, FOLIAGE_ENV_INTENSITY } from './config';
 
 export class TerrainApp {
   readonly debug: boolean;
@@ -45,7 +46,11 @@ export class TerrainApp {
     this.reversedDepthSupported = reversedDepthSupported;
     this.scene = createScene();
     this.camera = createCamera(window.innerWidth / window.innerHeight);
-    createLighting(this.scene);
+    const lighting = createLighting(this.scene);
+
+    // IBL: generate PMREM environment map, align sun direction
+    const env = createEnvironment(this.renderer, this.scene);
+    lighting.sun.position.copy(env.sunDirection).multiplyScalar(50);
 
     this.dpr = createDprController(this.renderer, {
       mode: opts.dprMode || 'fixed',
@@ -60,10 +65,14 @@ export class TerrainApp {
 
     this.textures = loadTextureSet(this.renderer);
     const { matDisp, matNoDisp } = createTerrainMaterials(this.textures);
+    matDisp.envMap = env.environmentMap;
+    matDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
+    matNoDisp.envMap = env.environmentMap;
+    matNoDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
     this.matDisp = matDisp;
     this.matNoDisp = matNoDisp;
 
-    this.foliage = createFoliageSystem(this.scene);
+    this.foliage = createFoliageSystem(this.scene, FOLIAGE_ENV_INTENSITY);
 
     this.slots = [];
     this.centerCX = Infinity;

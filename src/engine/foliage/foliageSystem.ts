@@ -55,14 +55,13 @@ function makeShrubGeo() {
  * @param {THREE.Scene} scene - The scene to add instanced meshes to.
  * @returns {{ createInstances: () => object, rebuild: (foliage, cx, cz, isFar) => void }}
  */
-export function createFoliageSystem(scene: Scene): FoliageSystem {
-  // Singleton geometry + materials, created once per system
+export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageSystem {
   const grassGeo = makeGrassGeo();
   const rockGeo  = makeRockGeo();
   const shrubGeo = makeShrubGeo();
 
   const grassMat = new THREE.MeshLambertMaterial({ color: 0x4a7a2e, side: THREE.DoubleSide });
-  const rockMat  = new THREE.MeshStandardMaterial({ color: 0x8a8a7a, roughness: 0.9 });
+  const rockMat  = new THREE.MeshStandardMaterial({ color: 0x8a8a7a, roughness: 0.9, envMapIntensity: envIntensity });
   const shrubMat = new THREE.MeshLambertMaterial({ color: 0x3d6b2e });
 
   const _dummy = new THREE.Object3D();

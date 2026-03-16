@@ -57,7 +57,8 @@ export function createLighting(scene: Scene): Lighting {
   sun.position.set(30, 50, 20);
   scene.add(sun);
 
-  const hemi = new THREE.HemisphereLight(0x87ceeb, 0x556b2f, 0.6);
+  // Slightly reduced from 0.6 — IBL subtly supplements ambient
+  const hemi = new THREE.HemisphereLight(0x87ceeb, 0x556b2f, 0.5);
   scene.add(hemi);
 
   const fill = new THREE.DirectionalLight(0xadd8e6, 0.4);

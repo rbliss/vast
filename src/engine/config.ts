@@ -25,3 +25,9 @@ export const GRID_RADIUS = 2;
 export const GRASS_PER_CHUNK = 600;
 export const ROCK_PER_CHUNK = 80;
 export const SHRUB_PER_CHUNK = 120;
+
+// Environment / IBL
+export const TERRAIN_ENV_INTENSITY = 0.08;
+export const FOLIAGE_ENV_INTENSITY = 0.03;
+export const SUN_ELEVATION = 45;   // degrees above horizon
+export const SUN_AZIMUTH = 210;    // degrees from north
