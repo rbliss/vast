@@ -70,16 +70,19 @@ export class TerrainApp {
     this.reversedDepthSupported = reversedDepthSupported;
 
     // Use WebGPU-specific scene/camera/lights for proper node mapping
+    let sunLight: THREE.DirectionalLight;
     if (this.rendererMode === 'webgpu') {
       this.scene = createWebGPUScene() as any;
       this.camera = createWebGPUCamera(window.innerWidth / window.innerHeight) as any;
       const lighting = createWebGPULighting(this.scene);
       this._hemiLight = lighting.hemi as any;
+      sunLight = lighting.sun as any;
     } else {
       this.scene = createScene();
       this.camera = createCamera(window.innerWidth / window.innerHeight);
       const lighting = createLighting(this.scene);
       this._hemiLight = lighting.hemi;
+      sunLight = lighting.sun;
     }
 
     // IBL: skip PMREM in WebGPU mode (PMREMGenerator uses WebGL internals)
@@ -87,7 +90,7 @@ export class TerrainApp {
       const env = createEnvironment(this.renderer, this.scene);
       this._envMap = env.environmentMap;
       this._iblEnabled = true;
-      lighting.sun.position.copy(env.sunDirection).multiplyScalar(50);
+      sunLight.position.copy(env.sunDirection).multiplyScalar(50);
     } else {
       this._envMap = null!;
       this._iblEnabled = false;
