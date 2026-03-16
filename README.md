@@ -55,13 +55,22 @@ The project is organized around a few core systems:
 
 ## Running
 
-Current local flow:
+### Vite dev server (recommended)
+
+```bash
+python3 server.py &    # screenshot API on port 8080
+npm run dev            # Vite on port 5173, proxies /api/* to 8080
+```
+
+Then open `http://localhost:5173/vite-index.html` in the browser.
+
+### Standalone (no Vite)
 
 ```bash
 python3 server.py
 ```
 
-Then open `http://beyond-all-reason:8080` in the browser.
+Then open `http://localhost:8080` in the browser (uses original `index.html` with CDN imports).
 
 Useful query params:
 

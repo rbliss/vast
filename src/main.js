@@ -1,6 +1,5 @@
 import './styles.css';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import { noise2D, fbm, ridgedFBM } from './engine/noise.js';
 import { terrainHeight, MACRO_HEIGHT_SCALE } from './engine/terrainHeight.js';
@@ -11,22 +10,22 @@ import {
   GRID_RADIUS,
   GRASS_PER_CHUNK, ROCK_PER_CHUNK, SHRUB_PER_CHUNK,
 } from './engine/config.js';
+import { createRenderer, createScene, createCamera, createLighting } from './engine/core/renderer.js';
+import { createOrbitMovement } from './engine/controls/orbitMovement.js';
 import { createDprController } from './engine/controls/dprController.js';
+import { createHud } from './ui/hud.js';
+import { createScreenshotUi } from './ui/screenshotUi.js';
+import { createDprButtons } from './ui/dprButtons.js';
 
 // ═══════════════════════════════════════════════════════
-// Renderer, Scene, Camera
+// Bootstrap
 // ═══════════════════════════════════════════════════════
-// preserveDrawingBuffer only when ?debug is in the URL (perf cost otherwise)
 const debugMode = location.search.includes('debug');
-const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: debugMode });
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+const renderer = createRenderer({ preserveDrawingBuffer: debugMode });
 document.body.appendChild(renderer.domElement);
 
 // ═══════════════════════════════════════════════════════
-// DPR controller (V8.3) — adaptive pixel ratio
-// ═══════════════════════════════════════════════════════
-// Parse ?dpr= from URL
+// DPR controller
 const dprParam = new URLSearchParams(location.search).get('dpr');
 let dprInitialMode = 'fixed';
 let dprInitialValue = 2;
@@ -37,78 +36,19 @@ if (dprParam === 'auto') {
   const v = parseFloat(dprParam);
   if (v >= 1.0 && v <= Math.min(window.devicePixelRatio, 2)) dprInitialValue = v;
 }
-
 const dpr = createDprController(renderer, { mode: dprInitialMode, initial: dprInitialValue });
-
-// Initial setup
 renderer.setSize(window.innerWidth, window.innerHeight);
 
-// ── DPR UI buttons ──
-const dprButtons = document.querySelectorAll('#dprRow button[data-dpr]');
+// DPR UI buttons (extracted module)
+const dprBtns = createDprButtons(document.getElementById('dprRow'), dpr);
 
-function updateDprButtons() {
-  dprButtons.forEach(btn => {
-    const val = btn.dataset.dpr;
-    if (val === 'auto') {
-      btn.classList.toggle('active', dpr.ctrl.mode === 'auto');
-    } else {
-      btn.classList.toggle('active',
-        dpr.ctrl.mode === 'fixed' && Math.abs(parseFloat(val) - dpr.ctrl.current) < 0.01);
-    }
-  });
-}
+// Scene, camera, lighting (extracted modules)
+const scene = createScene();
+const camera = createCamera(window.innerWidth / window.innerHeight);
+createLighting(scene);
 
-function updateDprUrl() {
-  const params = new URLSearchParams(location.search);
-  params.set('dpr', dpr.ctrl.mode === 'auto' ? 'auto' : dpr.ctrl.current.toString());
-  history.replaceState(null, '', '?' + params.toString());
-}
-
-function setDprMode(mode, value) {
-  dpr.setMode(mode, value);
-  updateDprButtons();
-  updateDprUrl();
-}
-
-dprButtons.forEach(btn => {
-  btn.addEventListener('click', () => {
-    const val = btn.dataset.dpr;
-    if (val === 'auto') setDprMode('auto');
-    else setDprMode('fixed', parseFloat(val));
-  });
-});
-
-updateDprButtons();
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb);
-scene.fog = new THREE.FogExp2(0x87ceeb, 0.005);
-
-const camera = new THREE.PerspectiveCamera(
-  55, window.innerWidth / window.innerHeight, 0.1, 800
-);
-camera.position.set(50, 30, 50);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 5, 0);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.maxPolarAngle = Math.PI / 2.05;
-controls.minDistance = 3;
-controls.maxDistance = 300;
-controls.update();
-
-// ───── Lighting ─────
-const sun = new THREE.DirectionalLight(0xfff4e6, 2.5);
-sun.position.set(30, 50, 20);
-scene.add(sun);
-
-const hemi = new THREE.HemisphereLight(0x87ceeb, 0x556b2f, 0.6);
-scene.add(hemi);
-
-const fill = new THREE.DirectionalLight(0xadd8e6, 0.4);
-fill.position.set(-20, 10, -20);
-scene.add(fill);
+// Controls + WASD movement (extracted module)
+const { controls, applyMovement } = createOrbitMovement(camera, renderer.domElement);
 
 // ═══════════════════════════════════════════════════════
 // Textures — world-space UVs, repeat = 1
@@ -814,139 +754,14 @@ function updateChunks() {
 buildSlots();
 updateChunks();
 
-// ═══════════════════════════════════════════════════════
-// WASD / arrow-key movement
-// ═══════════════════════════════════════════════════════
-const _fwd = new THREE.Vector3();
-const _right = new THREE.Vector3();
-const _delta = new THREE.Vector3();
-const moveState = { forward: false, back: false, left: false, right: false, fast: false };
+// Screenshot UI (extracted module)
+createScreenshotUi(
+  document.getElementById('screenshotBtn'),
+  document.getElementById('shotStatus'),
+  { renderer, scene, camera, getLabel: () => `terrain_${centerCX}_${centerCZ}` }
+);
 
-function setMoveKey(code, down) {
-  if (code === 'KeyW' || code === 'ArrowUp')        moveState.forward = down;
-  else if (code === 'KeyS' || code === 'ArrowDown')  moveState.back = down;
-  else if (code === 'KeyA' || code === 'ArrowLeft')  moveState.left = down;
-  else if (code === 'KeyD' || code === 'ArrowRight') moveState.right = down;
-  else if (code === 'ShiftLeft' || code === 'ShiftRight') moveState.fast = down;
-  else return false;
-  return true;
-}
-
-window.addEventListener('keydown', (e) => {
-  if (e.altKey || e.ctrlKey || e.metaKey) return;
-  if (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) return;
-  if (setMoveKey(e.code, true)) e.preventDefault();
-});
-window.addEventListener('keyup', (e) => { setMoveKey(e.code, false); });
-
-function applyMovement(dt) {
-  _fwd.copy(controls.target).sub(camera.position);
-  _fwd.y = 0;
-  if (_fwd.lengthSq() < 1e-6) return;
-  _fwd.normalize();
-  _right.crossVectors(_fwd, camera.up).normalize();
-
-  _delta.set(0, 0, 0);
-  if (moveState.forward) _delta.add(_fwd);
-  if (moveState.back)    _delta.sub(_fwd);
-  if (moveState.right)   _delta.add(_right);
-  if (moveState.left)    _delta.sub(_right);
-  if (_delta.lengthSq() === 0) return;
-
-  const speed = moveState.fast ? 55 : 28;
-  _delta.normalize().multiplyScalar(speed * dt);
-  camera.position.add(_delta);
-  controls.target.add(_delta);
-}
-
-// ═══════════════════════════════════════════════════════
-// Screenshot button (render-to-target, no preserveDrawingBuffer)
-// ═══════════════════════════════════════════════════════
-const screenshotBtn = document.getElementById('screenshotBtn');
-const shotStatusEl  = document.getElementById('shotStatus');
-let screenshotBusy = false;
-
-function setShotStatus(msg, err = false) {
-  shotStatusEl.textContent = msg;
-  shotStatusEl.classList.toggle('error', err);
-}
-
-function captureToDataURL() {
-  const sz = new THREE.Vector2();
-  renderer.getDrawingBufferSize(sz);
-  const w = Math.max(1, Math.floor(sz.x));
-  const h = Math.max(1, Math.floor(sz.y));
-  const rt = new THREE.WebGLRenderTarget(w, h, { depthBuffer: true });
-  rt.texture.colorSpace = THREE.SRGBColorSpace;
-  if (renderer.capabilities.isWebGL2) rt.samples = 4;
-
-  const prev = renderer.getRenderTarget();
-  renderer.setRenderTarget(rt);
-  renderer.render(scene, camera);
-
-  const px = new Uint8Array(w * h * 4);
-  renderer.readRenderTargetPixels(rt, 0, 0, w, h, px);
-  renderer.setRenderTarget(prev);
-  rt.dispose();
-
-  // Flip Y into temp canvas
-  const cv = document.createElement('canvas');
-  cv.width = w; cv.height = h;
-  const ctx = cv.getContext('2d');
-  const img = ctx.createImageData(w, h);
-  for (let y = 0; y < h; y++) {
-    const src = (h - 1 - y) * w * 4;
-    img.data.set(px.subarray(src, src + w * 4), y * w * 4);
-  }
-  ctx.putImageData(img, 0, 0);
-  return cv.toDataURL('image/png');
-}
-
-async function copyToClipboard(text) {
-  try {
-    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
-  } catch {}
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px';
-    document.body.appendChild(ta); ta.select();
-    const ok = document.execCommand('copy'); ta.remove(); return ok;
-  } catch { return false; }
-}
-
-async function takeScreenshot() {
-  if (screenshotBusy) return;
-  screenshotBusy = true;
-  screenshotBtn.disabled = true;
-  setShotStatus('Capturing...');
-  try {
-    controls.update(); updateChunks();
-    renderer.render(scene, camera);
-
-    const image = captureToDataURL();
-    const label = `terrain_${centerCX}_${centerCZ}`;
-    const resp = await fetch('/api/screenshot', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image, label, format: 'png' }),
-    });
-    if (!resp.ok) throw new Error(`upload ${resp.status}`);
-    const result = await resp.json();
-    const copied = await copyToClipboard(result.filename);
-    const url = new URL(result.path, location.href).href;
-    setShotStatus(`${result.filename}${copied ? ' (copied)' : ''} — ${url}`);
-  } catch (err) {
-    console.error('[screenshot]', err);
-    setShotStatus(`Failed: ${err.message}`, true);
-  } finally {
-    screenshotBusy = false;
-    screenshotBtn.disabled = false;
-  }
-}
-
-screenshotBtn.addEventListener('click', takeScreenshot);
-
-// ───── Resize (preserve current DPR) ─────
+// Resize
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -954,19 +769,19 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// Expose for debug console access
+// Debug access
 if (debugMode) {
   window.__controls = controls;
   window.__camera = camera;
   window.__scene = scene;
 }
 
-// ───── FPS ─────
-const fpsEl = document.getElementById('fps');
-let frameCount = 0, lastTime = performance.now();
-let prevTime = performance.now();
+// HUD (extracted module)
+const hud = createHud(document.getElementById('fps'));
 
 // ───── Animate ─────
+let prevTime = performance.now();
+
 function animate() {
   requestAnimationFrame(animate);
   const now = performance.now();
@@ -978,19 +793,12 @@ function animate() {
   updateChunks();
   renderer.render(scene, camera);
 
-  frameCount++;
-  if (now - lastTime >= 500) {
-    const fps = frameCount / ((now - lastTime) / 1000);
-    const dprInfo = dpr.ctrl.mode === 'auto'
-      ? ` | dpr ${dpr.ctrl.current.toFixed(2)} | auto`
-      : ` | dpr ${dpr.ctrl.current.toFixed(2)}`;
-    fpsEl.textContent = `${fps.toFixed(0)} fps${dprInfo}`;
-    dpr.update(fps, now - lastTime);
-    updateDprButtons();
-    frameCount = 0;
-    lastTime = now;
+  const hudResult = hud.tick(now, dpr.ctrl);
+  if (hudResult) {
+    dpr.update(hudResult.fps, 500);
+    dprBtns.updateHighlights();
   }
 }
 
 animate();
-console.log(`[terrain] v8.3 — adaptive DPR (mode: ${dpr.ctrl.mode}, initial: ${dpr.ctrl.current})`);
+console.log(`[terrain] v9.1 — modular engine/app split`);
