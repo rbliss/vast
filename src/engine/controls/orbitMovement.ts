@@ -1,16 +1,21 @@
 /**
  * OrbitControls + WASD/arrow keyboard movement.
- * No DOM creation — receives camera and domElement.
  */
 
 import * as THREE from 'three';
+import type { PerspectiveCamera } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 const _fwd = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _delta = new THREE.Vector3();
 
-export function createOrbitMovement(camera, domElement) {
+export interface OrbitMovement {
+  controls: OrbitControls;
+  applyMovement: (dt: number) => void;
+}
+
+export function createOrbitMovement(camera: PerspectiveCamera, domElement: HTMLElement): OrbitMovement {
   const controls = new OrbitControls(camera, domElement);
   controls.target.set(0, 5, 0);
   controls.enableDamping = true;
@@ -22,7 +27,7 @@ export function createOrbitMovement(camera, domElement) {
 
   const moveState = { forward: false, back: false, left: false, right: false, fast: false };
 
-  function setMoveKey(code, down) {
+  function setMoveKey(code: string, down: boolean): boolean {
     if (code === 'KeyW' || code === 'ArrowUp')        moveState.forward = down;
     else if (code === 'KeyS' || code === 'ArrowDown')  moveState.back = down;
     else if (code === 'KeyA' || code === 'ArrowLeft')  moveState.left = down;
@@ -39,7 +44,7 @@ export function createOrbitMovement(camera, domElement) {
   });
   window.addEventListener('keyup', (e) => { setMoveKey(e.code, false); });
 
-  function applyMovement(dt) {
+  function applyMovement(dt: number) {
     _fwd.copy(controls.target).sub(camera.position);
     _fwd.y = 0;
     if (_fwd.lengthSq() < 1e-6) return;
