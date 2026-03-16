@@ -164,11 +164,83 @@
     // preserveDrawingBuffer only when ?debug is in the URL (perf cost otherwise)
     const debugMode = location.search.includes('debug');
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: debugMode });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
     document.body.appendChild(renderer.domElement);
+
+    // ═══════════════════════════════════════════════════════
+    // DPR controller (V8.3) — adaptive pixel ratio
+    // ═══════════════════════════════════════════════════════
+    const dprCtrl = {
+      mode: 'fixed',              // 'fixed' | 'auto'
+      current: 2,
+      min: 1.0,
+      max: Math.min(window.devicePixelRatio, 2),
+      step: 0.25,
+      buckets: [1.0, 1.25, 1.5, 1.75, 2.0],
+      // Hysteresis state
+      belowMs: 0,                 // ms spent below downscale threshold
+      aboveMs: 0,                 // ms spent above upscale threshold
+      lastChangeTime: 0,          // cooldown reference
+      // Thresholds
+      downFps: 78,
+      upFps: 105,
+      downDelay: 1000,
+      upDelay: 4000,
+      cooldown: 1500,
+    };
+
+    // Parse ?dpr= from URL
+    const dprParam = new URLSearchParams(location.search).get('dpr');
+    if (dprParam === 'auto') {
+      dprCtrl.mode = 'auto';
+      dprCtrl.current = dprCtrl.max;
+    } else if (dprParam) {
+      const v = parseFloat(dprParam);
+      if (v >= dprCtrl.min && v <= dprCtrl.max) dprCtrl.current = v;
+    }
+
+    function applyDpr(nextDpr) {
+      // Snap to nearest bucket
+      nextDpr = dprCtrl.buckets.reduce((best, b) =>
+        Math.abs(b - nextDpr) < Math.abs(best - nextDpr) ? b : best
+      );
+      nextDpr = Math.max(dprCtrl.min, Math.min(dprCtrl.max, nextDpr));
+      if (nextDpr === dprCtrl.current) return;
+      dprCtrl.current = nextDpr;
+      renderer.setPixelRatio(nextDpr);
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+      dprCtrl.lastChangeTime = performance.now();
+      dprCtrl.belowMs = 0;
+      dprCtrl.aboveMs = 0;
+    }
+
+    function updateDpr(fps, dtMs) {
+      if (dprCtrl.mode !== 'auto') return;
+      const now = performance.now();
+      if (now - dprCtrl.lastChangeTime < dprCtrl.cooldown) return;
+
+      if (fps < dprCtrl.downFps) {
+        dprCtrl.belowMs += dtMs;
+        dprCtrl.aboveMs = 0;
+        if (dprCtrl.belowMs > dprCtrl.downDelay) {
+          applyDpr(dprCtrl.current - dprCtrl.step);
+        }
+      } else if (fps > dprCtrl.upFps) {
+        dprCtrl.aboveMs += dtMs;
+        dprCtrl.belowMs = 0;
+        if (dprCtrl.aboveMs > dprCtrl.upDelay) {
+          applyDpr(dprCtrl.current + dprCtrl.step);
+        }
+      } else {
+        dprCtrl.belowMs = 0;
+        dprCtrl.aboveMs = 0;
+      }
+    }
+
+    // Initial setup
+    applyDpr(dprCtrl.current);
+    renderer.setSize(window.innerWidth, window.innerHeight);
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87ceeb);
@@ -1052,10 +1124,11 @@
 
     screenshotBtn.addEventListener('click', takeScreenshot);
 
-    // ───── Resize ─────
+    // ───── Resize (preserve current DPR) ─────
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
+      renderer.setPixelRatio(dprCtrl.current);
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
@@ -1085,14 +1158,19 @@
 
       frameCount++;
       if (now - lastTime >= 500) {
-        fpsEl.textContent = `${(frameCount / ((now - lastTime) / 1000)).toFixed(0)} fps`;
+        const fps = frameCount / ((now - lastTime) / 1000);
+        const dprInfo = dprCtrl.mode === 'auto'
+          ? ` | dpr ${dprCtrl.current.toFixed(2)} | auto`
+          : ` | dpr ${dprCtrl.current.toFixed(2)}`;
+        fpsEl.textContent = `${fps.toFixed(0)} fps${dprInfo}`;
+        updateDpr(fps, now - lastTime);
         frameCount = 0;
         lastTime = now;
       }
     }
 
     animate();
-    console.log('[terrain] v8.1 — WASD movement + screenshot UI');
+    console.log(`[terrain] v8.3 — adaptive DPR (mode: ${dprCtrl.mode}, initial: ${dprCtrl.current})`);
   </script>
 </body>
 </html>
