@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terrain Renderer — aerial_rocks_04</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; }
+    canvas { display: block; }
+    #info {
+      position: absolute; top: 12px; left: 12px;
+      color: #ccc; font: 13px/1.4 monospace;
+      background: rgba(0,0,0,0.6); padding: 8px 12px;
+      border-radius: 4px; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">
+    Orbit: drag &nbsp;|&nbsp; Zoom: scroll &nbsp;|&nbsp; Pan: right-drag<br>
+    <span id="fps"></span>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ═══════════════════════════════════════════════════════
+    // Simplex-style 2D noise (compact, no dependencies)
+    // ═══════════════════════════════════════════════════════
+    const _p = new Uint8Array(512);
+    const _perm = new Uint8Array(512);
+    const _grad = [[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
+    (function initNoise() {
+      const p = [151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,
+        140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,247,120,234,
+        75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,88,237,149,
+        56,87,174,20,125,136,171,168,68,175,74,165,71,134,139,48,27,166,
+        77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,
+        245,40,244,102,143,54,65,25,63,161,1,216,80,73,209,76,132,187,
+        208,89,18,169,200,196,135,130,116,188,159,86,164,100,109,198,173,
+        186,3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,
+        212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,119,
+        248,152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,
+        253,19,98,108,110,79,113,224,232,178,185,112,104,218,246,97,228,
+        251,34,242,193,238,210,144,12,191,179,162,241,81,51,145,235,249,
+        14,239,107,49,192,214,31,181,199,106,157,184,84,204,176,115,121,
+        50,45,127,4,150,254,138,236,205,93,222,114,67,29,24,72,243,141,
+        128,195,78,66,215,61,156,180];
+      for (let i = 0; i < 256; i++) { _p[i] = p[i]; _p[i+256] = p[i]; }
+      for (let i = 0; i < 512; i++) _perm[i] = _p[i] & 7;
+    })();
+
+    function dot2(g, x, y) { return g[0]*x + g[1]*y; }
+
+    function noise2D(x, y) {
+      const F2 = 0.5*(Math.sqrt(3)-1), G2 = (3-Math.sqrt(3))/6;
+      const s = (x+y)*F2;
+      const i = Math.floor(x+s), j = Math.floor(y+s);
+      const t = (i+j)*G2;
+      const X0 = i-t, Y0 = j-t;
+      const x0 = x-X0, y0 = y-Y0;
+      const i1 = x0>y0?1:0, j1 = x0>y0?0:1;
+      const x1 = x0-i1+G2, y1 = y0-j1+G2;
+      const x2 = x0-1+2*G2, y2 = y0-1+2*G2;
+      const ii = i&255, jj = j&255;
+      const g0 = _grad[_perm[ii   + _p[jj  ]]];
+      const g1 = _grad[_perm[ii+i1+ _p[jj+j1]]];
+      const g2 = _grad[_perm[ii+1 + _p[jj+1]]];
+      let n0=0, n1=0, n2=0;
+      let t0 = 0.5-x0*x0-y0*y0;
+      if(t0>0){t0*=t0; n0=t0*t0*dot2(g0,x0,y0);}
+      let t1 = 0.5-x1*x1-y1*y1;
+      if(t1>0){t1*=t1; n1=t1*t1*dot2(g1,x1,y1);}
+      let t2 = 0.5-x2*x2-y2*y2;
+      if(t2>0){t2*=t2; n2=t2*t2*dot2(g2,x2,y2);}
+      return 70*(n0+n1+n2); // range roughly [-1, 1]
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // FBM & ridged-FBM for macro terrain shape
+    // ═══════════════════════════════════════════════════════
+    function fbm(x, y, octaves, lacunarity, gain) {
+      let sum = 0, amp = 1, freq = 1, maxAmp = 0;
+      for (let i = 0; i < octaves; i++) {
+        sum += noise2D(x * freq, y * freq) * amp;
+        maxAmp += amp;
+        amp *= gain;
+        freq *= lacunarity;
+      }
+      return sum / maxAmp;
+    }
+
+    function ridgedFBM(x, y, octaves, lacunarity, gain) {
+      let sum = 0, amp = 1, freq = 1, prev = 1, maxAmp = 0;
+      for (let i = 0; i < octaves; i++) {
+        let n = Math.abs(noise2D(x * freq, y * freq));
+        n = 1.0 - n;       // invert for ridges
+        n = n * n;          // sharpen ridges
+        sum += n * amp * prev;
+        maxAmp += amp;
+        prev = Math.min(n + 0.3, 1.0);   // soften feedback loop
+        amp *= gain;
+        freq *= lacunarity;
+      }
+      return sum / maxAmp;
+    }
+
+    /** Combined terrain height at world-space (x, z) */
+    function terrainHeight(x, z) {
+      // Broad rolling hills — very low frequency, gives gentle base elevation
+      const broad = fbm(x * 0.012, z * 0.012, 4, 2.0, 0.5) * 0.5 + 0.5;
+
+      // Ridged mountains — lower frequency for wider ridges, fewer octaves
+      const ridged = ridgedFBM(x * 0.025, z * 0.025, 4, 2.0, 0.45);
+
+      // Medium-scale rolling variation
+      const medium = fbm(x * 0.05, z * 0.05, 3, 2.0, 0.5) * 0.5 + 0.5;
+
+      // Blend: broad base with ridged peaks, medium variation for interest
+      const blend = broad * 0.45 + ridged * 0.35 + medium * 0.2;
+
+      // Fine detail noise
+      const detail = fbm(x * 0.12, z * 0.12, 3, 2.0, 0.4) * 0.04;
+
+      return blend + detail;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // Renderer, Scene, Camera
+    // ═══════════════════════════════════════════════════════
+    // preserveDrawingBuffer only when ?debug is in the URL (perf cost otherwise)
+    const debugMode = location.search.includes('debug');
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: debugMode });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.FogExp2(0x87ceeb, 0.005);
+
+    const camera = new THREE.PerspectiveCamera(
+      55, window.innerWidth / window.innerHeight, 0.1, 800
+    );
+    camera.position.set(50, 30, 50);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 5, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.maxPolarAngle = Math.PI / 2.05;
+    controls.minDistance = 3;
+    controls.maxDistance = 300;
+    controls.update();
+
+    // ───── Lighting ─────
+    const sun = new THREE.DirectionalLight(0xfff4e6, 2.5);
+    sun.position.set(30, 50, 20);
+    scene.add(sun);
+
+    const hemi = new THREE.HemisphereLight(0x87ceeb, 0x556b2f, 0.6);
+    scene.add(hemi);
+
+    const fill = new THREE.DirectionalLight(0xadd8e6, 0.4);
+    fill.position.set(-20, 10, -20);
+    scene.add(fill);
+
+    // ═══════════════════════════════════════════════════════
+    // Textures — world-space UVs, repeat = 1
+    // ═══════════════════════════════════════════════════════
+    const loader = new THREE.TextureLoader();
+    const textureWorldSize = 10;           // each tile covers ~10 world units
+    const macroHeightScale = 12;           // peak elevation in world units
+
+    function loadTex(path, srgb = false) {
+      const tex = loader.load(
+        path,
+        () => console.log(`[tex] loaded ${path}`),
+        undefined,
+        (err) => console.error(`[tex] FAILED ${path}`, err)
+      );
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
+      return tex;
+    }
+
+    // Rock layer (aerial_rocks_04 — existing)
+    const rockDiff   = loadTex('textures/aerial_rocks_04_diff_1k.jpg', true);
+    const rockDisp   = loadTex('textures/aerial_rocks_04_disp_1k.jpg');
+    const rockNorm   = loadTex('textures/aerial_rocks_04_nor_gl_1k.jpg');
+    const rockRough  = loadTex('textures/aerial_rocks_04_rough_1k.jpg');
+    const rockAo     = loadTex('textures/aerial_rocks_04_ao_1k.jpg');
+
+    // Grass layer (aerial_grass_rock)
+    const grassDiff  = loadTex('textures/aerial_grass_rock_diff_1k.jpg', true);
+    const grassNorm  = loadTex('textures/aerial_grass_rock_nor_gl_1k.jpg');
+    const grassRough = loadTex('textures/aerial_grass_rock_rough_1k.jpg');
+
+    // Dirt layer (brown_mud_leaves_01)
+    const dirtDiff   = loadTex('textures/brown_mud_leaves_01_diff_1k.jpg', true);
+    const dirtNorm   = loadTex('textures/brown_mud_leaves_01_nor_gl_1k.jpg');
+    const dirtRough  = loadTex('textures/brown_mud_leaves_01_rough_1k.jpg');
+
+    // ═══════════════════════════════════════════════════════
+    // Chunked LOD terrain
+    // ═══════════════════════════════════════════════════════
+    const chunkSize = 40;                  // world units per chunk
+    const gridRadius = 2;                  // -2..+2 = 5×5 visible grid
+    const skirtDepth = 3.0;               // skirt drop in world units
+
+    // LOD levels by Chebyshev distance from camera chunk
+    const LOD_NEAR = { segments: 128, displacement: true };
+    const LOD_MID  = { segments: 48,  displacement: true };
+    const LOD_FAR  = { segments: 24,  displacement: false };
+
+    function getLOD(d) {
+      if (d === 0) return LOD_NEAR;
+      if (d === 1) return LOD_MID;
+      return LOD_FAR;
+    }
+
+    /** Build a LOCAL-SPACE chunk geometry. Mesh.position provides world offset. */
+    function createLocalChunkGeo(originX, originZ, lod) {
+      const seg = lod.segments;
+      const geo = new THREE.PlaneGeometry(chunkSize, chunkSize, seg, seg);
+      geo.rotateX(-Math.PI / 2);
+
+      const pos = geo.getAttribute('position');
+      const uv = geo.getAttribute('uv');
+      const gridW = seg + 1;
+
+      // Keep local X/Z, set Y from heightfield, world-space UVs
+      for (let i = 0; i < pos.count; i++) {
+        const lx = pos.getX(i);
+        const lz = pos.getZ(i);
+        const wx = lx + originX;
+        const wz = lz + originZ;
+        pos.setY(i, terrainHeight(wx, wz) * macroHeightScale);
+        uv.setXY(i, wx / textureWorldSize, wz / textureWorldSize);
+      }
+      pos.needsUpdate = true;
+      uv.needsUpdate = true;
+      geo.computeVertexNormals();
+
+      // ── Add skirts around all 4 edges ──
+      addSkirts(geo, gridW, skirtDepth);
+
+      geo.setAttribute('uv2', geo.getAttribute('uv').clone());
+      return geo;
+    }
+
+    /** Add vertical skirt geometry around chunk edges to hide LOD cracks */
+    function addSkirts(geo, gridW, depth) {
+      const oldPos = geo.getAttribute('position');
+      const oldUv = geo.getAttribute('uv');
+      const oldNorm = geo.getAttribute('normal');
+      const oldIdx = geo.getIndex();
+      const oldVertCount = oldPos.count;
+
+      // Compute chunk center for inward nudging
+      let cx = 0, cz = 0;
+      for (let i = 0; i < oldVertCount; i++) {
+        cx += oldPos.getX(i);
+        cz += oldPos.getZ(i);
+      }
+      cx /= oldVertCount;
+      cz /= oldVertCount;
+      const inset = 0.05; // small inward nudge to hide skirts behind terrain
+
+      // Collect edge vertex indices for each side
+      const edges = [];
+      // Top edge (first row, left→right)
+      const top = []; for (let c = 0; c < gridW; c++) top.push(c);
+      edges.push(top);
+      // Right edge (last col, top→bottom)
+      const right = []; for (let r = 0; r < gridW; r++) right.push(r * gridW + gridW - 1);
+      edges.push(right);
+      // Bottom edge (last row, right→left)
+      const bot = []; for (let c = gridW - 1; c >= 0; c--) bot.push((gridW - 1) * gridW + c);
+      edges.push(bot);
+      // Left edge (first col, bottom→top)
+      const left = []; for (let r = gridW - 1; r >= 0; r--) left.push(r * gridW);
+      edges.push(left);
+
+      // Count total edge vertices (corners appear twice, that's OK)
+      let totalEdgeVerts = 0;
+      for (const e of edges) totalEdgeVerts += e.length;
+
+      const newVertCount = oldVertCount + totalEdgeVerts;
+      const newPos = new Float32Array(newVertCount * 3);
+      const newUv = new Float32Array(newVertCount * 2);
+      const newNorm = new Float32Array(newVertCount * 3);
+
+      // Copy existing data
+      for (let i = 0; i < oldVertCount; i++) {
+        newPos[i*3]   = oldPos.getX(i);
+        newPos[i*3+1] = oldPos.getY(i);
+        newPos[i*3+2] = oldPos.getZ(i);
+        newUv[i*2]    = oldUv.getX(i);
+        newUv[i*2+1]  = oldUv.getY(i);
+        newNorm[i*3]   = oldNorm.getX(i);
+        newNorm[i*3+1] = oldNorm.getY(i);
+        newNorm[i*3+2] = oldNorm.getZ(i);
+      }
+
+      // Count skirt triangles
+      let skirtTriCount = 0;
+      for (const e of edges) skirtTriCount += (e.length - 1) * 2;
+
+      const oldIdxArr = oldIdx.array;
+      const newIdxArr = new Uint32Array(oldIdxArr.length + skirtTriCount * 3);
+      newIdxArr.set(oldIdxArr);
+      let idxPtr = oldIdxArr.length;
+      let skirtBase = oldVertCount;
+
+      for (const edge of edges) {
+        // Create lowered copies of this edge's vertices, nudged inward
+        for (let i = 0; i < edge.length; i++) {
+          const ei = edge[i];
+          const ni = skirtBase + i;
+          const ex = oldPos.getX(ei);
+          const ez = oldPos.getZ(ei);
+          // Nudge toward chunk center so skirt hides behind terrain shell
+          const dx = cx - ex, dz = cz - ez;
+          const len = Math.sqrt(dx * dx + dz * dz) || 1;
+          newPos[ni*3]   = ex + (dx / len) * inset;
+          newPos[ni*3+1] = oldPos.getY(ei) - depth;
+          newPos[ni*3+2] = ez + (dz / len) * inset;
+          newUv[ni*2]    = oldUv.getX(ei);
+          newUv[ni*2+1]  = oldUv.getY(ei);
+          // Skirt normals point straight down — prevents light catching
+          newNorm[ni*3]   = 0;
+          newNorm[ni*3+1] = -1;
+          newNorm[ni*3+2] = 0;
+        }
+
+        // Create quads connecting edge to skirt
+        for (let i = 0; i < edge.length - 1; i++) {
+          const a = edge[i];              // top current
+          const b = edge[i + 1];          // top next
+          const c = skirtBase + i + 1;    // bottom next
+          const d = skirtBase + i;        // bottom current
+          newIdxArr[idxPtr++] = a;
+          newIdxArr[idxPtr++] = d;
+          newIdxArr[idxPtr++] = c;
+          newIdxArr[idxPtr++] = a;
+          newIdxArr[idxPtr++] = c;
+          newIdxArr[idxPtr++] = b;
+        }
+
+        skirtBase += edge.length;
+      }
+
+      geo.setAttribute('position', new THREE.BufferAttribute(newPos, 3));
+      geo.setAttribute('uv', new THREE.BufferAttribute(newUv, 2));
+      geo.setAttribute('normal', new THREE.BufferAttribute(newNorm, 3));
+      geo.setIndex(new THREE.BufferAttribute(newIdxArr, 1));
+    }
+
+    // ───── Materials: near/mid share one, far has no displacement ─────
+    function createMaterial(useDisplacement) {
+      // Base material uses rock as the "primary" layer for three.js internals
+      const mat = new THREE.MeshStandardMaterial({
+        map: rockDiff,
+        normalMap: rockNorm,
+        normalScale: new THREE.Vector2(1.0, 1.0),
+        roughnessMap: rockRough,
+        aoMap: rockAo,
+        aoMapIntensity: 1.0,
+        envMapIntensity: 0.3,
+      });
+      if (useDisplacement) {
+        mat.displacementMap = rockDisp;
+        mat.displacementScale = 0.25;
+        mat.displacementBias = -0.1;
+      }
+      return mat;
+    }
+
+    const matDisp   = createMaterial(true);
+    const matNoDisp = createMaterial(false);
+
+    // ═══════════════════════════════════════════════════════
+    // Biome blending shader (V5.1)
+    // 3 layers: grass (flat), dirt (transition), rock (steep/tri-planar)
+    // Per-layer world scales, height-biased rock, reduced dirt dominance
+    // ═══════════════════════════════════════════════════════
+    const rockWorldSize  = 10;   // rock tiles every 10 world units
+    const grassWorldSize = 8;    // grass slightly tighter tiling
+    const dirtWorldSize  = 6;    // dirt tightest — smaller leaf pattern
+
+    function applyBiomeShader(material) {
+      material.onBeforeCompile = (shader) => {
+        // Uniforms: biome textures + scale
+        shader.uniforms.rockScale    = { value: 1.0 / rockWorldSize };
+        shader.uniforms.grassScale   = { value: 1.0 / grassWorldSize };
+        shader.uniforms.dirtScale    = { value: 1.0 / dirtWorldSize };
+        shader.uniforms.chunkHalf    = { value: chunkSize / 2 };
+        shader.uniforms.grassDiffMap = { value: grassDiff };
+        shader.uniforms.grassRoughMap = { value: grassRough };
+        shader.uniforms.dirtDiffMap  = { value: dirtDiff };
+        shader.uniforms.dirtRoughMap = { value: dirtRough };
+
+        // ── Vertex: world-space varyings ──
+        shader.vertexShader = shader.vertexShader.replace(
+          '#include <common>',
+          `#include <common>
+          varying vec3 vWorldPosition;
+          varying vec3 vWorldNormal;
+          uniform float chunkHalf;`
+        );
+        // Edge displacement fade: reduce micro displacement near chunk borders
+        shader.vertexShader = shader.vertexShader.replace(
+          '#include <displacementmap_vertex>',
+          `#ifdef USE_DISPLACEMENTMAP
+            float edgeDist = min(
+              min(transformed.x + chunkHalf, chunkHalf - transformed.x),
+              min(transformed.z + chunkHalf, chunkHalf - transformed.z)
+            );
+            float dispFade = smoothstep(0.0, 3.0, edgeDist);
+            transformed += normalize(objectNormal) * (
+              texture2D(displacementMap, vDisplacementMapUv).x * displacementScale * dispFade
+              + displacementBias * dispFade
+            );
+          #endif`
+        );
+        shader.vertexShader = shader.vertexShader.replace(
+          '#include <worldpos_vertex>',
+          `#include <worldpos_vertex>
+          vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
+          vWorldNormal = normalize(mat3(modelMatrix) * objectNormal);`
+        );
+
+        // ── Fragment: declarations + biome noise + helpers ──
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <common>',
+          `#include <common>
+          varying vec3 vWorldPosition;
+          varying vec3 vWorldNormal;
+          uniform float rockScale;
+          uniform float grassScale;
+          uniform float dirtScale;
+          uniform sampler2D grassDiffMap;
+          uniform sampler2D grassRoughMap;
+          uniform sampler2D dirtDiffMap;
+          uniform sampler2D dirtRoughMap;
+
+          // Simple hash-based noise for biome variation (no per-frag FBM)
+          float biomeHash(vec2 p) {
+            vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+            p3 += dot(p3, p3.yzx + 33.33);
+            return fract((p3.x + p3.y) * p3.z);
+          }
+          float biomeNoise(vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            f = f * f * (3.0 - 2.0 * f); // smoothstep
+            float a = biomeHash(i);
+            float b = biomeHash(i + vec2(1.0, 0.0));
+            float c = biomeHash(i + vec2(0.0, 1.0));
+            float d = biomeHash(i + vec2(1.0, 1.0));
+            return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+          }
+          `
+        );
+
+        // ── Diffuse: 3-layer biome blend ──
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <map_fragment>',
+          `
+          // ── Shared variables: per-layer UVs ──
+          vec3 triWeights = pow(abs(vWorldNormal), vec3(4.0));
+          triWeights /= (triWeights.x + triWeights.y + triWeights.z + 1e-6);
+          float slope = 1.0 - abs(vWorldNormal.y);
+          // Rock: tri-planar UVs at rock scale
+          vec2 triUvX = vWorldPosition.zy * rockScale;
+          vec2 triUvY = vWorldPosition.xz * rockScale;
+          vec2 triUvZ = vWorldPosition.xy * rockScale;
+          // Grass/dirt: flat planar UVs at their own scales
+          vec2 grassUv = vWorldPosition.xz * grassScale;
+          vec2 dirtUv  = vWorldPosition.xz * dirtScale;
+
+          // ── Biome weights ──
+          float bNoise = biomeNoise(vWorldPosition.xz * 0.03);
+          // Height factor: rock dominates more at higher elevations
+          float heightBias = smoothstep(4.0, 9.0, vWorldPosition.y) * 0.3;
+          float wRock  = smoothstep(0.35, 0.65, slope + heightBias);
+          // Grass dominates flat areas; dirt is a narrower transition
+          float flatWeight = 1.0 - wRock;
+          float wGrass = flatWeight * smoothstep(0.25, 0.6, bNoise);
+          float wDirt  = flatWeight * (1.0 - smoothstep(0.2, 0.55, bNoise)) * 0.6;
+          // Normalize
+          float wSum = wRock + wGrass + wDirt + 1e-6;
+          wRock /= wSum; wGrass /= wSum; wDirt /= wSum;
+
+          #ifdef USE_MAP
+            // Rock: tri-planar sampled (handles cliffs)
+            vec4 rockCol = texture2D(map, triUvX) * triWeights.x
+                         + texture2D(map, triUvY) * triWeights.y
+                         + texture2D(map, triUvZ) * triWeights.z;
+            // Grass & dirt: flat planar UV at per-layer scales
+            vec4 grassCol = texture2D(grassDiffMap, grassUv);
+            vec4 dirtCol  = texture2D(dirtDiffMap, dirtUv);
+
+            vec4 sampledDiffuseColor = rockCol * wRock
+                                     + grassCol * wGrass
+                                     + dirtCol * wDirt;
+            diffuseColor *= sampledDiffuseColor;
+          #endif
+          `
+        );
+
+        // ── Roughness: biome-blended ──
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+          #ifdef USE_ROUGHNESSMAP
+          {
+            float rockRgh  = texture2D(roughnessMap, triUvX).g * triWeights.x
+                           + texture2D(roughnessMap, triUvY).g * triWeights.y
+                           + texture2D(roughnessMap, triUvZ).g * triWeights.z;
+            float grassRgh = texture2D(grassRoughMap, grassUv).g;
+            float dirtRgh  = texture2D(dirtRoughMap, dirtUv).g;
+            roughnessFactor = roughness * (rockRgh * wRock + grassRgh * wGrass + dirtRgh * wDirt);
+          }
+          #endif
+          `
+        );
+
+        // ── Normals: save geometry normal, then override per biome ──
+        // Save geometry normal BEFORE standard chunk applies rock normal map
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <normal_fragment_begin>',
+          `#include <normal_fragment_begin>
+          vec3 geoNormal = normal; // geometry normal in view space, pre-perturbation
+          `
+        );
+
+        // After standard chunk runs rock normal map, replace with biome blend
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <normal_fragment_maps>',
+          `#include <normal_fragment_maps>
+          #ifdef USE_NORMALMAP_TANGENTSPACE
+          {
+            // geoNormal = geometry normal (no rock perturbation)
+            // normal = rock UV-perturbed (from standard chunk)
+            vec3 flatNormal = geoNormal; // grass/dirt use clean geometry normal
+
+            // Rock: tri-planar Whiteout (Golus) — only computed where needed
+            vec3 axisSign = sign(vWorldNormal);
+            vec3 tnX = texture2D(normalMap, triUvX).xyz * 2.0 - 1.0;
+            vec3 tnY = texture2D(normalMap, triUvY).xyz * 2.0 - 1.0;
+            vec3 tnZ = texture2D(normalMap, triUvZ).xyz * 2.0 - 1.0;
+            tnX.xy *= normalScale; tnY.xy *= normalScale; tnZ.xy *= normalScale;
+            tnX.x *= axisSign.x; tnY.x *= axisSign.y; tnZ.x *= -axisSign.z;
+            tnX = vec3(tnX.xy + vWorldNormal.zy, abs(vWorldNormal.x));
+            tnY = vec3(tnY.xy + vWorldNormal.xz, abs(vWorldNormal.y));
+            tnZ = vec3(tnZ.xy + vWorldNormal.xy, abs(vWorldNormal.z));
+            vec3 rockNrmWorld = normalize(
+              tnX.zyx * triWeights.x + tnY.xzy * triWeights.y + tnZ.xyz * triWeights.z
+            );
+            vec3 rockNrmView = normalize(mat3(viewMatrix) * rockNrmWorld);
+
+            // Blend: flat areas keep standard normal, steep areas use rock tri-planar
+            normal = normalize(mix(flatNormal, rockNrmView, wRock));
+          }
+          #endif
+          `
+        );
+
+        // ── AO: undo rock AO from standard chunk; reapply only for rock areas ──
+        // Standard chunk applies rock AO to everything. We need to:
+        // 1. Undo that (divide out stdAO)
+        // 2. Reapply: rock gets tri-planar rock AO, grass/dirt get 1.0 (no AO)
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <aomap_fragment>',
+          `#include <aomap_fragment>
+          #ifdef USE_AOMAP
+          {
+            float uvAoVal = texture2D(aoMap, vAoMapUv).r;
+            float stdAO = (uvAoVal - 1.0) * aoMapIntensity + 1.0;
+            // Rock: tri-planar AO
+            float triAoVal = texture2D(aoMap, triUvX).r * triWeights.x
+                           + texture2D(aoMap, triUvY).r * triWeights.y
+                           + texture2D(aoMap, triUvZ).r * triWeights.z;
+            float rockAO = (triAoVal - 1.0) * aoMapIntensity + 1.0;
+            // Grass/dirt: no AO darkening (1.0)
+            float biomeAO = mix(1.0, rockAO, wRock);
+            // Correct: undo standard, apply biome
+            float aoCorrection = biomeAO / max(stdAO, 0.001);
+            reflectedLight.indirectDiffuse *= aoCorrection;
+          }
+          #endif
+          `
+        );
+      };
+      material.customProgramCacheKey = () => 'biome_v6';
+    }
+
+    // Apply biome shader to both material variants
+    applyBiomeShader(matDisp);
+    applyBiomeShader(matNoDisp);
+
+    // ═══════════════════════════════════════════════════════
+    // Camera-centered chunk pool with recycling
+    // ═══════════════════════════════════════════════════════
+    const chunkMap = new Map(); // "cx,cz" → { mesh, lod, cx, cz }
+    let centerCX = Infinity, centerCZ = Infinity; // force initial build
+
+    function chunkKey(cx, cz) { return `${cx},${cz}`; }
+
+    function spawnChunk(cx, cz, lod) {
+      const originX = cx * chunkSize;
+      const originZ = cz * chunkSize;
+      const geo = createLocalChunkGeo(originX, originZ, lod);
+      const mat = lod.displacement ? matDisp : matNoDisp;
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(originX, 0, originZ);
+      scene.add(mesh);
+      return { mesh, lod, cx, cz };
+    }
+
+    function updateChunks() {
+      // Determine which chunk cell the camera is over
+      const camCX = Math.round(controls.target.x / chunkSize);
+      const camCZ = Math.round(controls.target.z / chunkSize);
+
+      if (camCX === centerCX && camCZ === centerCZ) return;
+      centerCX = camCX;
+      centerCZ = camCZ;
+
+      // Compute new visible set with LOD
+      const newVisible = new Map();
+      for (let dz = -gridRadius; dz <= gridRadius; dz++) {
+        for (let dx = -gridRadius; dx <= gridRadius; dx++) {
+          const cx = camCX + dx, cz = camCZ + dz;
+          const d = Math.max(Math.abs(dx), Math.abs(dz));
+          newVisible.set(chunkKey(cx, cz), { cx, cz, lod: getLOD(d) });
+        }
+      }
+
+      // Remove chunks no longer visible
+      for (const [key, slot] of chunkMap) {
+        if (!newVisible.has(key)) {
+          scene.remove(slot.mesh);
+          slot.mesh.geometry.dispose();
+          chunkMap.delete(key);
+        }
+      }
+
+      // Add new chunks / update LOD on existing
+      for (const [key, info] of newVisible) {
+        const existing = chunkMap.get(key);
+        if (existing) {
+          // If LOD changed, rebuild
+          if (existing.lod !== info.lod) {
+            scene.remove(existing.mesh);
+            existing.mesh.geometry.dispose();
+            chunkMap.set(key, spawnChunk(info.cx, info.cz, info.lod));
+          }
+        } else {
+          chunkMap.set(key, spawnChunk(info.cx, info.cz, info.lod));
+        }
+      }
+
+      console.log(`[terrain] chunks: ${chunkMap.size}, center: (${camCX}, ${camCZ})`);
+    }
+
+    // Initial build
+    updateChunks();
+
+    // ───── Resize ─────
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Expose for debug console access
+    if (debugMode) {
+      window.__controls = controls;
+      window.__camera = camera;
+      window.__scene = scene;
+    }
+
+    // ───── FPS ─────
+    const fpsEl = document.getElementById('fps');
+    let frameCount = 0, lastTime = performance.now();
+
+    // ───── Animate ─────
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      updateChunks();
+      renderer.render(scene, camera);
+
+      frameCount++;
+      const now = performance.now();
+      if (now - lastTime >= 500) {
+        fpsEl.textContent = `${(frameCount / ((now - lastTime) / 1000)).toFixed(0)} fps`;
+        frameCount = 0;
+        lastTime = now;
+      }
+    }
+
+    animate();
+    console.log('[terrain] v6 — infinite streaming + chunk recycling');
+  </script>
+</body>
+</html>
