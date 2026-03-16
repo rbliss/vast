@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 8080 --strictPort",
+    "api": "node api-server.cjs",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0"
   },
@@ -15,6 +16,7 @@
     "vite": "^8.0.0"
   },
   "dependencies": {
+    "express": "^5.2.1",
     "three": "^0.170.0"
   }
 }

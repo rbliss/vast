@@ -7,7 +7,7 @@ Type=simple
 User=claude
 WorkingDirectory=/home/claude/terrain
 Environment=PORT=8081
-ExecStart=/usr/bin/python3 /home/claude/terrain/server.py
+ExecStart=/usr/bin/node /home/claude/terrain/api-server.cjs
 Restart=always
 RestartSec=2
 

@@ -49,7 +49,7 @@ The project is organized around a few core systems:
 ## Tech Stack
 
 - **three.js**
-- **Python server** for screenshot upload / verification API
+- **Express** API server for screenshot upload / verification
 - **Poly Haven** terrain textures
 - **Vite** for modular ES module builds and dev server
 
@@ -72,7 +72,7 @@ sudo systemctl restart terrain-vite terrain-api
 ### Local dev
 
 ```bash
-PORT=8081 python3 server.py &
+PORT=8081 node api-server.cjs &
 npm run dev
 ```
 
@@ -83,15 +83,8 @@ Then open:
 
 ### Legacy standalone fallback
 
-If you want the old non-Vite page:
-
-```bash
-PORT=8081 python3 server.py
-```
-
-Then open:
-
-- `http://localhost:8081/standalone.html`
+The old non-Vite page is preserved as `standalone.html` and can be served
+directly by any static file server.
 
 ### Query params
 
