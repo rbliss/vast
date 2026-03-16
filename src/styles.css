@@ -32,6 +32,17 @@ canvas { display: block; }
   border-color: rgba(100,160,255,0.5);
 }
 
+#iblBtn {
+  border: 0; border-radius: 6px; padding: 6px 12px;
+  font: 12px/1 monospace; background: rgba(60,120,200,0.7);
+  color: #fff; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+#iblBtn:hover { background: rgba(70,140,220,0.85); }
+#iblBtn.off {
+  background: rgba(40,40,40,0.7); color: #aaa;
+}
+#iblBtn.off:hover { background: rgba(60,60,60,0.85); }
+
 #screenshotBtn {
   border: 0; border-radius: 6px; padding: 8px 14px;
   font: 13px/1 monospace; background: rgba(20,20,20,0.82);

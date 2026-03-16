@@ -3,6 +3,7 @@
  * Framework-agnostic — no DOM creation, no UI knowledge.
  */
 
+import * as THREE from 'three';
 import type { WebGLRenderer, Scene, PerspectiveCamera, MeshStandardMaterial } from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, TextureSet } from './types';
@@ -37,6 +38,10 @@ export class TerrainApp {
 
   private _applyMovement: (dt: number) => void;
   private _prevTime: number;
+  private _iblEnabled: boolean;
+  private _hemiLight: THREE.HemisphereLight;
+  private _envMap: THREE.Texture;
+  private _foliageRockMat: THREE.MeshStandardMaterial | null = null;
 
   constructor(container: HTMLElement, opts: TerrainAppOptions = {}) {
     this.debug = opts.debug || false;
@@ -47,9 +52,12 @@ export class TerrainApp {
     this.scene = createScene();
     this.camera = createCamera(window.innerWidth / window.innerHeight);
     const lighting = createLighting(this.scene);
+    this._hemiLight = lighting.hemi;
 
     // IBL: generate PMREM environment map, align sun direction
     const env = createEnvironment(this.renderer, this.scene);
+    this._envMap = env.environmentMap;
+    this._iblEnabled = true;
     lighting.sun.position.copy(env.sunDirection).multiplyScalar(50);
 
     this.dpr = createDprController(this.renderer, {
@@ -81,6 +89,34 @@ export class TerrainApp {
     this.updateChunks();
 
     this._prevTime = performance.now();
+  }
+
+  // ── IBL toggle ──
+  // Pre-IBL baseline: hemi=0.6, env=0
+  // IBL mode: hemi=0.5, env=TERRAIN_ENV_INTENSITY
+  private static readonly HEMI_IBL_ON = 0.5;
+  private static readonly HEMI_IBL_OFF = 0.6;
+
+  isIblEnabled(): boolean {
+    return this._iblEnabled;
+  }
+
+  setIblEnabled(enabled: boolean): void {
+    this._iblEnabled = enabled;
+    if (enabled) {
+      this.matDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
+      this.matNoDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
+      this._hemiLight.intensity = TerrainApp.HEMI_IBL_ON;
+    } else {
+      this.matDisp.envMapIntensity = 0;
+      this.matNoDisp.envMapIntensity = 0;
+      this._hemiLight.intensity = TerrainApp.HEMI_IBL_OFF;
+    }
+  }
+
+  toggleIbl(): boolean {
+    this.setIblEnabled(!this._iblEnabled);
+    return this._iblEnabled;
   }
 
   private _buildSlots(): void {

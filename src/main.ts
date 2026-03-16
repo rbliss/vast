@@ -47,6 +47,28 @@ createScreenshotUi(
 
 const hud = createHud(mustEl('fps'), { reversedDepth: app.reversedDepthSupported });
 
+// ── IBL toggle ──
+const iblBtn = mustEl<HTMLButtonElement>('iblBtn');
+const iblParam = new URLSearchParams(location.search).get('ibl');
+if (iblParam === 'off') {
+  app.setIblEnabled(false);
+}
+
+function updateIblButton() {
+  const on = app.isIblEnabled();
+  iblBtn.textContent = on ? 'IBL On' : 'IBL Off';
+  iblBtn.classList.toggle('off', !on);
+  const params = new URLSearchParams(location.search);
+  params.set('ibl', on ? 'on' : 'off');
+  history.replaceState(null, '', '?' + params.toString());
+}
+
+iblBtn.addEventListener('click', () => {
+  app.toggleIbl();
+  updateIblButton();
+});
+updateIblButton();
+
 // ── Resize ──
 window.addEventListener('resize', () => {
   app.resize(window.innerWidth, window.innerHeight);
@@ -73,4 +95,4 @@ function animate() {
 }
 
 animate();
-console.log(`[terrain] v11.0 — revZ: ${app.reversedDepthSupported} (mode: ${app.dpr.ctrl.mode})`);
+console.log(`[terrain] v11.1 — revZ: ${app.reversedDepthSupported}, IBL: ${app.isIblEnabled()} (mode: ${app.dpr.ctrl.mode})`);
