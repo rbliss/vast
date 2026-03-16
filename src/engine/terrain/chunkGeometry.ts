@@ -16,14 +16,15 @@ import {
   LOD_NEAR, LOD_MID, LOD_FAR,
 } from '../config';
 import type { LodLevel } from '../config';
-import type { ChunkSlot } from '../types';
+import type { ChunkSlot, FoliagePayload } from '../types';
 import { terrainHeight, MACRO_HEIGHT_SCALE } from '../terrainHeight';
 
 /** One-time slot creation: allocates geometry, topology, mesh. Never freed. */
 export function createChunkSlot(
   lod: LodLevel, dx: number, dz: number,
   scene: Scene, matDisp: MeshStandardMaterial, matNoDisp: MeshStandardMaterial,
-) {
+  foliage: FoliagePayload,
+): ChunkSlot {
   const seg = lod.segments;
   const gridW = seg + 1;
   const gridVertCount = gridW * gridW;
@@ -95,36 +96,42 @@ export function createChunkSlot(
     skirtBase += edge.length;
   }
 
-  // Create permanent geometry
+  // Create permanent geometry with typed attribute refs
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
-  geo.setAttribute('uv',       new THREE.BufferAttribute(uvArr, 2));
-  geo.setAttribute('normal',   new THREE.BufferAttribute(normArr, 3));
-  geo.setAttribute('uv2',      new THREE.BufferAttribute(uv2Arr, 2));
-  geo.setIndex(new THREE.BufferAttribute(idxArr, 1));
+  const posAttr = new THREE.BufferAttribute(posArr, 3);
+  const uvAttr  = new THREE.BufferAttribute(uvArr, 2);
+  const normAttr = new THREE.BufferAttribute(normArr, 3);
+  const uv2Attr = new THREE.BufferAttribute(uv2Arr, 2);
+  const idxAttr = new THREE.BufferAttribute(idxArr, 1);
+  geo.setAttribute('position', posAttr);
+  geo.setAttribute('uv', uvAttr);
+  geo.setAttribute('normal', normAttr);
+  geo.setAttribute('uv2', uv2Attr);
+  geo.setIndex(idxAttr);
 
-  // Create permanent mesh
   const mat = lod.displacement ? matDisp : matNoDisp;
   const mesh = new THREE.Mesh(geo, mat);
   scene.add(mesh);
 
   tmpGeo.dispose();
 
+  const attrs = { position: posAttr, uv: uvAttr, uv2: uv2Attr, normal: normAttr, index: idxAttr };
+
   return {
-    dx, dz, lod, mesh, geo,
+    dx, dz, lod, mesh, geo, attrs,
     gridW, gridVertCount, skirtVertCount, totalVertCount,
     edgeIndices,
-    // Named edges for LOD stitching (in grid index order along each border)
     edgeMinZ, edgePlusZ, edgeMinX, edgePlusX,
     cx: Infinity, cz: Infinity,
+    foliage,
   };
 }
 
 /** Compute vertex normals for grid vertices only, ignoring skirt faces. */
-export function computeGridNormals(geo: BufferGeometry, gridVertCount: number): void {
-  const pos = geo.getAttribute('position');
-  const norm = geo.getAttribute('normal');
-  const idxArr = geo.getIndex()!.array;
+export function computeGridNormals(slot: ChunkSlot): void {
+  const { position: pos, normal: norm, index } = slot.attrs;
+  const gridVertCount = slot.gridVertCount;
+  const idxArr = index.array;
 
   // Zero grid normals
   for (let i = 0; i < gridVertCount * 3; i++) norm.array[i] = 0;
@@ -190,9 +197,7 @@ export function rebuildChunkSlot(slot: ChunkSlot, centerCX: number, centerCZ: nu
   const originX = cx * CHUNK_SIZE;
   const originZ = cz * CHUNK_SIZE;
 
-  const pos  = slot.geo.getAttribute('position') as THREE.BufferAttribute;
-  const uv   = slot.geo.getAttribute('uv') as THREE.BufferAttribute;
-  const uv2  = slot.geo.getAttribute('uv2') as THREE.BufferAttribute;
+  const { position: pos, uv, uv2 } = slot.attrs;
 
   // Update grid vertices: Y from heightfield, UVs from world pos
   for (let i = 0; i < slot.gridVertCount; i++) {
@@ -233,7 +238,7 @@ export function rebuildChunkSlot(slot: ChunkSlot, centerCX: number, centerCZ: nu
   uv2.needsUpdate = true;
 
   // Compute normals for grid only — skirt faces excluded
-  computeGridNormals(slot.geo, slot.gridVertCount);
+  computeGridNormals(slot);
 
   slot.mesh.position.set(originX, 0, originZ);
   slot.geo.computeBoundingSphere();

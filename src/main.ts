@@ -6,6 +6,7 @@
 import './styles.css';
 
 import { TerrainApp } from './engine/TerrainApp';
+import { mustEl } from './engine/types';
 import { createHud } from './ui/hud';
 import { createScreenshotUi } from './ui/screenshotUi';
 import { createDprButtons } from './ui/dprButtons';
@@ -31,14 +32,11 @@ const app = new TerrainApp(document.body, {
 });
 
 // ── Wire UI ──
-const dprBtns = createDprButtons(
-  document.getElementById('dprRow')!,
-  app.dpr,
-);
+const dprBtns = createDprButtons(mustEl('dprRow'), app.dpr);
 
 createScreenshotUi(
-  document.getElementById('screenshotBtn')! as HTMLButtonElement,
-  document.getElementById('shotStatus')!,
+  mustEl<HTMLButtonElement>('screenshotBtn'),
+  mustEl('shotStatus'),
   {
     renderer: app.renderer,
     scene: app.scene,
@@ -47,7 +45,7 @@ createScreenshotUi(
   },
 );
 
-const hud = createHud(document.getElementById('fps')!);
+const hud = createHud(mustEl('fps'));
 
 // ── Resize ──
 window.addEventListener('resize', () => {
@@ -75,4 +73,4 @@ function animate() {
 }
 
 animate();
-console.log(`[terrain] v10.0 — TypeScript (mode: ${app.dpr.ctrl.mode})`);
+console.log(`[terrain] v10.3 — strict TS (mode: ${app.dpr.ctrl.mode})`);

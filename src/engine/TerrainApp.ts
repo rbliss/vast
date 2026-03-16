@@ -76,8 +76,8 @@ export class TerrainApp {
       for (let dx = -GRID_RADIUS; dx <= GRID_RADIUS; dx++) {
         const d = Math.max(Math.abs(dx), Math.abs(dz));
         const lod = d === 0 ? LOD_NEAR : d === 1 ? LOD_MID : LOD_FAR;
-        const slot = createChunkSlot(lod, dx, dz, this.scene, this.matDisp, this.matNoDisp) as ChunkSlot;
-        slot.foliage = this.foliage.createInstances();
+        const foliagePayload = this.foliage.createInstances();
+        const slot = createChunkSlot(lod, dx, dz, this.scene, this.matDisp, this.matNoDisp, foliagePayload);
         this.slots.push(slot);
       }
     }
@@ -95,7 +95,7 @@ export class TerrainApp {
     for (const slot of this.slots) {
       if (rebuildChunkSlot(slot, this.centerCX, this.centerCZ)) {
         const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
-        this.foliage.rebuild(slot.foliage!, slot.cx, slot.cz, d >= GRID_RADIUS);
+        this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= GRID_RADIUS);
         rebuilt++;
       }
     }

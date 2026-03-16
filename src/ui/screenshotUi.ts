@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import type { WebGLRenderer, Scene, PerspectiveCamera } from 'three';
+import type { ScreenshotUploadResponse } from '../engine/types';
 
 interface ScreenshotOpts {
   renderer: WebGLRenderer;
@@ -81,7 +82,7 @@ export function createScreenshotUi(
         body: JSON.stringify({ image, label, format: 'png' }),
       });
       if (!resp.ok) throw new Error(`upload ${resp.status}`);
-      const result = await resp.json();
+      const result: ScreenshotUploadResponse = await resp.json();
       const copied = await copyToClipboard(result.filename);
       const url = new URL(result.path, location.href).href;
       setStatus(`${result.filename}${copied ? ' (copied)' : ''} — ${url}`);
