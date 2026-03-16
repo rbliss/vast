@@ -1,8 +1,7 @@
 /**
  * TSL/NodeMaterial terrain material for WebGPU mode.
- * Uses Three Shading Language with expression-based node composition.
- *
- * Stage A+B: albedo + roughness + biome blend + edge displacement fade
+ * Stage B: albedo + roughness + biome blend + displacement fade
+ *          + rock tri-planar normals + biome AO
  */
 
 // @ts-nocheck — TSL types not fully typed in @types/three
@@ -19,7 +18,7 @@ import {
 } from '../config';
 import type { TextureSet, TerrainMaterials } from '../types';
 
-// ── Pure expression helpers (no .toVar() needed) ──
+// ── Pure expression helpers ──
 
 const biomeHash = Fn(([p]: [any]) => {
   const p3 = fract(vec3(p.x, p.y, p.x).mul(0.1031));
@@ -52,11 +51,35 @@ const biomeWeights = Fn(([wPos, wNorm]: [any, any]) => {
   const bn = biomeNoise(wPos.xz.mul(0.03));
   const hBias = smoothstep(float(4), float(9), wPos.y).mul(0.3);
   const rock = smoothstep(float(0.35), float(0.65), slope.add(hBias));
-  const flat = float(1).sub(rock);
-  const grass = flat.mul(smoothstep(float(0.25), float(0.6), bn));
-  const dirt = flat.mul(float(1).sub(smoothstep(float(0.2), float(0.55), bn))).mul(0.6);
+  const flat_ = float(1).sub(rock);
+  const grass = flat_.mul(smoothstep(float(0.25), float(0.6), bn));
+  const dirt = flat_.mul(float(1).sub(smoothstep(float(0.2), float(0.55), bn))).mul(0.6);
   const sum = rock.add(grass).add(dirt).add(1e-6);
   return vec3(rock.div(sum), grass.div(sum), dirt.div(sum));
+});
+
+// Rock tri-planar normal with Whiteout blending (Golus method)
+const triplanarRockNormal = Fn(([tex, wPos, wNorm, scale]: [any, any, any, any]) => {
+  const as = sign(wNorm);
+  const w = pow(abs(wNorm), vec3(4));
+  const ws = w.div(w.x.add(w.y).add(w.z).add(1e-6));
+
+  // Sample normal maps on each axis
+  const tnX = texture(tex, wPos.zy.mul(scale)).xyz.mul(2).sub(1);
+  const tnY = texture(tex, wPos.xz.mul(scale)).xyz.mul(2).sub(1);
+  const tnZ = texture(tex, wPos.xy.mul(scale)).xyz.mul(2).sub(1);
+
+  // Whiteout blending: swizzle world normal into tangent frame
+  const blendX = vec3(tnX.xy.add(wNorm.zy), abs(wNorm.x));
+  const blendY = vec3(tnY.xy.add(wNorm.xz), abs(wNorm.y));
+  const blendZ = vec3(tnZ.xy.add(wNorm.xy), abs(wNorm.z));
+
+  // Swizzle back to world space and blend
+  return normalize(
+    blendX.zyx.mul(ws.x)
+      .add(blendY.xzy.mul(ws.y))
+      .add(blendZ.mul(ws.z))
+  );
 });
 
 export function createNodeTerrainMaterials(textures: TextureSet): TerrainMaterials {
@@ -92,6 +115,26 @@ export function createNodeTerrainMaterials(textures: TextureSet): TerrainMateria
 
     // ── Metalness ──
     mat.metalnessNode = float(0);
+
+    // ── Normal: rock tri-planar, flat stays geometry ──
+    mat.normalNode = Fn(() => {
+      const wp = positionWorld;
+      const wn = normalWorld;
+      const bw = biomeWeights(wp, wn);
+      const rockNrm = triplanarRockNormal(textures.rockNorm, wp, wn, rk);
+      // Mix: flat areas keep geometry normal, steep areas get rock normal
+      return normalize(mix(wn, rockNrm, bw.x));
+    })();
+
+    // ── AO: rock gets AO, grass/dirt → 1.0 ──
+    mat.aoNode = Fn(() => {
+      const wp = positionWorld;
+      const wn = normalWorld;
+      const bw = biomeWeights(wp, wn);
+      const rockAo = triSample(textures.rockAo, wp, wn, rk).r;
+      // Grass/dirt get 1.0 (no darkening), rock gets actual AO
+      return mix(float(1), rockAo, bw.x);
+    })();
 
     // ── Edge displacement fade via positionNode ──
     if (useDisplacement) {

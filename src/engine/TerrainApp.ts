@@ -211,4 +211,17 @@ export class TerrainApp {
     this.renderer.setPixelRatio(this.dpr.ctrl.current);
     this.renderer.setSize(w, h);
   }
+
+  /** Renderer-agnostic frame capture. Returns PNG data URL. */
+  captureFrame(): string {
+    // Render a clean frame
+    this.controls.update();
+    this.updateChunks();
+    this.renderer.render(this.scene, this.camera);
+
+    // For both WebGL and WebGPU: canvas.toDataURL works after render
+    // WebGPU renderer preserves the framebuffer for one frame after render
+    const canvas = this.renderer.domElement;
+    return canvas.toDataURL('image/png');
+  }
 }

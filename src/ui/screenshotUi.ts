@@ -11,12 +11,14 @@ interface ScreenshotOpts {
   scene: Scene;
   camera: PerspectiveCamera;
   getLabel: () => string;
+  /** Optional facade capture — if provided, skips WebGL render target path */
+  captureFrame?: () => string;
 }
 
 export function createScreenshotUi(
   btnEl: HTMLButtonElement,
   statusEl: HTMLElement,
-  { renderer, scene, camera, getLabel }: ScreenshotOpts,
+  { renderer, scene, camera, getLabel, captureFrame }: ScreenshotOpts,
 ) {
   let busy = false;
 
@@ -73,8 +75,11 @@ export function createScreenshotUi(
     btnEl.disabled = true;
     setStatus('Capturing...');
     try {
-      renderer.render(scene, camera);
-      const image = captureToDataURL();
+      // Use facade capture if available (works for both WebGL and WebGPU)
+      const image = captureFrame ? captureFrame() : (() => {
+        renderer.render(scene, camera);
+        return captureToDataURL();
+      })();
       const label = getLabel();
       const resp = await fetch('/api/screenshot', {
         method: 'POST',

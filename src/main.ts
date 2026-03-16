@@ -45,6 +45,7 @@ createScreenshotUi(
     scene: app.scene,
     camera: app.camera,
     getLabel: () => `terrain_${app.centerCX}_${app.centerCZ}`,
+    captureFrame: () => app.captureFrame(),
   },
 );
 
