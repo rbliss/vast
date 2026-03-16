@@ -85,17 +85,11 @@ export class TerrainApp {
       sunLight = lighting.sun;
     }
 
-    // IBL: skip PMREM in WebGPU mode (PMREMGenerator uses WebGL internals)
-    if (this.rendererMode !== 'webgpu') {
-      const env = createEnvironment(this.renderer, this.scene);
-      this._envMap = env.environmentMap;
-      this._iblEnabled = true;
-      sunLight.position.copy(env.sunDirection).multiplyScalar(50);
-    } else {
-      this._envMap = null!;
-      this._iblEnabled = false;
-      console.log('[terrain] IBL disabled in WebGPU mode (PMREM not compatible)');
-    }
+    // IBL: generate PMREM (uses temp WebGL renderer if main is WebGPU)
+    const env = createEnvironment(this.renderer, this.scene, this.rendererMode === 'webgpu');
+    this._envMap = env.environmentMap;
+    this._iblEnabled = true;
+    sunLight.position.copy(env.sunDirection).multiplyScalar(50);
 
     this.dpr = createDprController(this.renderer, {
       mode: opts.dprMode || 'fixed',
