@@ -1,16 +1,16 @@
 /**
  * TSL/NodeMaterial terrain material for WebGPU mode.
- * Uses Three Shading Language with Fn()-based node composition.
+ * Uses Three Shading Language with expression-based node composition.
  *
- * Stage A: albedo + roughness + biome blend (no tri-planar normals yet).
+ * Stage A+B: albedo + roughness + biome blend + edge displacement fade
  */
 
 // @ts-nocheck — TSL types not fully typed in @types/three
 import { MeshStandardNodeMaterial } from 'three/webgpu';
 import {
   Fn, float, vec2, vec3, vec4,
-  texture, uniform, mix, smoothstep, abs, pow,
-  min, floor, fract, dot,
+  texture, uniform, mix, smoothstep, abs, pow, normalize,
+  min, floor, fract, dot, sign,
   positionWorld, positionLocal, normalWorld, normalLocal,
 } from 'three/tsl';
 
@@ -19,107 +19,94 @@ import {
 } from '../config';
 import type { TextureSet, TerrainMaterials } from '../types';
 
-// ── TSL helper functions (all inside Fn() for proper stack) ──
+// ── Pure expression helpers (no .toVar() needed) ──
 
-const biomeHashFn = Fn(([p_immutable]: [any]) => {
-  const p = p_immutable.toVar();
-  const p3 = fract(vec3(p.x, p.y, p.x).mul(0.1031)).toVar();
-  const d = dot(p3, vec3(p3.y.add(33.33), p3.z.add(33.33), p3.x.add(33.33)));
+const biomeHash = Fn(([p]: [any]) => {
+  const p3 = fract(vec3(p.x, p.y, p.x).mul(0.1031));
+  const d = dot(p3, p3.yzx.add(33.33));
   return fract(p3.x.add(p3.y).mul(p3.z).add(d));
 });
 
-const biomeNoiseFn = Fn(([p_immutable]: [any]) => {
-  const p = p_immutable.toVar();
-  const i = floor(p).toVar();
-  const f = fract(p).toVar();
-  const ff = f.mul(f).mul(float(3.0).sub(f.mul(2.0)));
-  const a = biomeHashFn(i);
-  const b = biomeHashFn(i.add(vec2(1.0, 0.0)));
-  const c = biomeHashFn(i.add(vec2(0.0, 1.0)));
-  const d = biomeHashFn(i.add(vec2(1.0, 1.0)));
+const biomeNoise = Fn(([p]: [any]) => {
+  const i = floor(p);
+  const f = fract(p);
+  const ff = f.mul(f).mul(float(3).sub(f.mul(2)));
+  const a = biomeHash(i);
+  const b = biomeHash(i.add(vec2(1, 0)));
+  const c = biomeHash(i.add(vec2(0, 1)));
+  const d = biomeHash(i.add(vec2(1, 1)));
   return mix(mix(a, b, ff.x), mix(c, d, ff.x), ff.y);
 });
 
-const triplanarSampleFn = Fn(([tex, wPos, wNorm, scale]: [any, any, any, any]) => {
-  const absN = abs(wNorm).toVar();
-  const weights = pow(absN, vec3(4.0)).toVar();
-  const wSum = weights.x.add(weights.y).add(weights.z).add(1e-6);
-  const w = weights.div(wSum);
+const triSample = Fn(([tex, wPos, wNorm, scale]: [any, any, any, any]) => {
+  const w = pow(abs(wNorm), vec3(4));
+  const ws = w.div(w.x.add(w.y).add(w.z).add(1e-6));
+  return texture(tex, wPos.zy.mul(scale)).mul(ws.x)
+    .add(texture(tex, wPos.xz.mul(scale)).mul(ws.y))
+    .add(texture(tex, wPos.xy.mul(scale)).mul(ws.z));
+});
 
-  const sX = texture(tex, wPos.zy.mul(scale));
-  const sY = texture(tex, wPos.xz.mul(scale));
-  const sZ = texture(tex, wPos.xy.mul(scale));
-
-  return sX.mul(w.x).add(sY.mul(w.y)).add(sZ.mul(w.z));
+// Shared biome weight computation — returns vec3(rock, grass, dirt) normalized
+const biomeWeights = Fn(([wPos, wNorm]: [any, any]) => {
+  const slope = float(1).sub(abs(wNorm.y));
+  const bn = biomeNoise(wPos.xz.mul(0.03));
+  const hBias = smoothstep(float(4), float(9), wPos.y).mul(0.3);
+  const rock = smoothstep(float(0.35), float(0.65), slope.add(hBias));
+  const flat = float(1).sub(rock);
+  const grass = flat.mul(smoothstep(float(0.25), float(0.6), bn));
+  const dirt = flat.mul(float(1).sub(smoothstep(float(0.2), float(0.55), bn))).mul(0.6);
+  const sum = rock.add(grass).add(dirt).add(1e-6);
+  return vec3(rock.div(sum), grass.div(sum), dirt.div(sum));
 });
 
 export function createNodeTerrainMaterials(textures: TextureSet): TerrainMaterials {
-  const rockScaleU = uniform(1.0 / ROCK_WORLD_SIZE);
-  const grassScaleU = uniform(1.0 / GRASS_WORLD_SIZE);
-  const dirtScaleU = uniform(1.0 / DIRT_WORLD_SIZE);
+  const rk = uniform(1.0 / ROCK_WORLD_SIZE);
+  const gr = uniform(1.0 / GRASS_WORLD_SIZE);
+  const dt = uniform(1.0 / DIRT_WORLD_SIZE);
+  const chunkHalf = uniform(CHUNK_SIZE / 2);
 
   function makeMat(useDisplacement: boolean) {
     const mat = new MeshStandardNodeMaterial();
 
-    // ── Albedo: biome-blended ──
+    // ── Albedo ──
     mat.colorNode = Fn(() => {
-      const wPos = positionWorld.toVar();
-      const wNorm = normalWorld.toVar();
-
-      // Biome weights
-      const slope = float(1.0).sub(abs(wNorm.y));
-      const bNoise = biomeNoiseFn(wPos.xz.mul(0.03));
-      const heightBias = smoothstep(float(4.0), float(9.0), wPos.y).mul(0.3);
-      const wRock = smoothstep(float(0.35), float(0.65), slope.add(heightBias)).toVar();
-      const flatWeight = float(1.0).sub(wRock);
-      const wGrass = flatWeight.mul(smoothstep(float(0.25), float(0.6), bNoise)).toVar();
-      const wDirt = flatWeight.mul(float(1.0).sub(smoothstep(float(0.2), float(0.55), bNoise))).mul(0.6).toVar();
-      const wSum = wRock.add(wGrass).add(wDirt).add(1e-6);
-      const nRock = wRock.div(wSum);
-      const nGrass = wGrass.div(wSum);
-      const nDirt = wDirt.div(wSum);
-
-      // Rock: tri-planar
-      const rockCol = triplanarSampleFn(textures.rockDiff, wPos, wNorm, rockScaleU);
-      // Grass + dirt: planar
-      const grassCol = texture(textures.grassDiff, wPos.xz.mul(grassScaleU));
-      const dirtCol = texture(textures.dirtDiff, wPos.xz.mul(dirtScaleU));
-
-      return rockCol.mul(nRock).add(grassCol.mul(nGrass)).add(dirtCol.mul(nDirt));
+      const wp = positionWorld;
+      const wn = normalWorld;
+      const bw = biomeWeights(wp, wn);
+      const rc = triSample(textures.rockDiff, wp, wn, rk);
+      const gc = texture(textures.grassDiff, wp.xz.mul(gr));
+      const dc = texture(textures.dirtDiff, wp.xz.mul(dt));
+      return rc.mul(bw.x).add(gc.mul(bw.y)).add(dc.mul(bw.z));
     })();
 
-    // ── Roughness: biome-blended ──
+    // ── Roughness ──
     mat.roughnessNode = Fn(() => {
-      const wPos = positionWorld.toVar();
-      const wNorm = normalWorld.toVar();
-
-      const slope = float(1.0).sub(abs(wNorm.y));
-      const bNoise = biomeNoiseFn(wPos.xz.mul(0.03));
-      const heightBias = smoothstep(float(4.0), float(9.0), wPos.y).mul(0.3);
-      const wRock = smoothstep(float(0.35), float(0.65), slope.add(heightBias)).toVar();
-      const flatWeight = float(1.0).sub(wRock);
-      const wGrass = flatWeight.mul(smoothstep(float(0.25), float(0.6), bNoise)).toVar();
-      const wDirt = flatWeight.mul(float(1.0).sub(smoothstep(float(0.2), float(0.55), bNoise))).mul(0.6).toVar();
-      const wSum = wRock.add(wGrass).add(wDirt).add(1e-6);
-      const nRock = wRock.div(wSum);
-      const nGrass = wGrass.div(wSum);
-      const nDirt = wDirt.div(wSum);
-
-      const rockRgh = triplanarSampleFn(textures.rockRough, wPos, wNorm, rockScaleU).g;
-      const grassRgh = texture(textures.grassRough, wPos.xz.mul(grassScaleU)).g;
-      const dirtRgh = texture(textures.dirtRough, wPos.xz.mul(dirtScaleU)).g;
-
-      return rockRgh.mul(nRock).add(grassRgh.mul(nGrass)).add(dirtRgh.mul(nDirt));
+      const wp = positionWorld;
+      const wn = normalWorld;
+      const bw = biomeWeights(wp, wn);
+      const rr = triSample(textures.rockRough, wp, wn, rk).g;
+      const gR = texture(textures.grassRough, wp.xz.mul(gr)).g;
+      const dR = texture(textures.dirtRough, wp.xz.mul(dt)).g;
+      return rr.mul(bw.x).add(gR.mul(bw.y)).add(dR.mul(bw.z));
     })();
 
-    // ── Metalness: terrain is non-metallic ──
+    // ── Metalness ──
     mat.metalnessNode = float(0);
 
-    // ── Displacement fade (Stage A: skip custom positionNode, use standard) ──
+    // ── Edge displacement fade via positionNode ──
     if (useDisplacement) {
-      mat.displacementMap = textures.rockDisp;
-      mat.displacementScale = 0.25;
-      mat.displacementBias = -0.1;
+      mat.positionNode = Fn(() => {
+        const lp = positionLocal.toVar();
+        const ln = normalLocal;
+        const edgeDist = min(
+          min(lp.x.add(chunkHalf), chunkHalf.sub(lp.x)),
+          min(lp.z.add(chunkHalf), chunkHalf.sub(lp.z)),
+        );
+        const fade = smoothstep(float(0), float(3), edgeDist);
+        const disp = texture(textures.rockDisp, positionWorld.xz.mul(rk)).x;
+        const offset = ln.mul(disp.mul(0.25).sub(0.1).mul(fade));
+        return lp.add(offset);
+      })();
     }
 
     mat.envMapIntensity = 0.08;
