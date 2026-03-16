@@ -55,22 +55,28 @@ The project is organized around a few core systems:
 
 ## Running
 
-### Vite dev server (recommended)
+Both services run as systemd units and start on boot:
 
 ```bash
-python3 server.py &    # screenshot API on port 8080
-npm run dev            # Vite on port 5173, proxies /api/* to 8080
+# Services are already enabled. To restart manually:
+sudo systemctl restart terrain-api terrain-vite
 ```
 
-Then open `http://localhost:5173/vite-index.html` in the browser.
+- **Vite frontend** on `:8080` — `http://beyond-all-reason:8080/`
+- **Screenshot API** on `:8081` — proxied through Vite at `/api/*`
 
-### Standalone (no Vite)
+### Manual dev (without systemd)
 
 ```bash
-python3 server.py
+PORT=8081 python3 server.py &   # screenshot API on 8081
+npm run dev                      # Vite on 8080, proxies /api/* to 8081
 ```
 
-Then open `http://localhost:8080` in the browser (uses original `index.html` with CDN imports).
+### Standalone fallback (no Vite)
+
+```bash
+python3 server.py    # serves standalone.html on default port
+```
 
 Useful query params:
 

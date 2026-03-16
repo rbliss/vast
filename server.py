@@ -99,9 +99,9 @@ class TerrainHandler(http.server.SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    PORT = 8080
+    PORT = int(os.environ.get("PORT", "8081"))
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     server = http.server.HTTPServer(("0.0.0.0", PORT), TerrainHandler)
-    print(f"[server] Terrain dev server on http://0.0.0.0:{PORT}")
+    print(f"[server] Screenshot API on http://0.0.0.0:{PORT}")
     print(f"[server] Screenshots → {VERIFICATION_DIR}")
     server.serve_forever()
