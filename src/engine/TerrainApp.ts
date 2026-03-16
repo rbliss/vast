@@ -9,8 +9,9 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, TextureSet } from './types';
 import type { DprController } from './controls/dprController';
 
-import { createRenderer, createRendererAsync, type RendererMode, type RendererResult } from './core/renderer';
+import { createRenderer, type RendererMode, type RendererResult } from './core/renderer';
 import { createScene, createCamera, createLighting } from './core/renderer';
+import { createWebGPURenderer, createWebGPUScene, createWebGPUCamera, createWebGPULighting } from './core/rendererWebGPU';
 import { createEnvironment } from './core/environment';
 import { createOrbitMovement } from './controls/orbitMovement';
 import { createDprController } from './controls/dprController';
@@ -48,8 +49,13 @@ export class TerrainApp {
   /** Async factory for WebGPU mode. Falls back to WebGL if unavailable. */
   static async createAsync(container: HTMLElement, opts: TerrainAppOptions = {}): Promise<TerrainApp> {
     if (opts.rendererMode === 'webgpu') {
-      const result = await createRendererAsync({ mode: 'webgpu', preserveDrawingBuffer: opts.debug });
-      return new TerrainApp(container, opts, result);
+      try {
+        const result = await createWebGPURenderer();
+        return new TerrainApp(container, opts, result);
+      } catch (err) {
+        console.warn('[terrain] WebGPU failed, falling back to WebGL:', err);
+        return new TerrainApp(container, opts);
+      }
     }
     return new TerrainApp(container, opts);
   }
@@ -62,10 +68,19 @@ export class TerrainApp {
     this.rendererMode = mode;
     this.renderer = renderer;
     this.reversedDepthSupported = reversedDepthSupported;
-    this.scene = createScene();
-    this.camera = createCamera(window.innerWidth / window.innerHeight);
-    const lighting = createLighting(this.scene);
-    this._hemiLight = lighting.hemi;
+
+    // Use WebGPU-specific scene/camera/lights for proper node mapping
+    if (this.rendererMode === 'webgpu') {
+      this.scene = createWebGPUScene() as any;
+      this.camera = createWebGPUCamera(window.innerWidth / window.innerHeight) as any;
+      const lighting = createWebGPULighting(this.scene);
+      this._hemiLight = lighting.hemi as any;
+    } else {
+      this.scene = createScene();
+      this.camera = createCamera(window.innerWidth / window.innerHeight);
+      const lighting = createLighting(this.scene);
+      this._hemiLight = lighting.hemi;
+    }
 
     // IBL: skip PMREM in WebGPU mode (PMREMGenerator uses WebGL internals)
     if (this.rendererMode !== 'webgpu') {
