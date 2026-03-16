@@ -13,7 +13,7 @@ export function loadTextureSet(renderer: WebGLRenderer): TextureSet {
       (err) => console.error(`[tex] FAILED ${path}`, err),
     );
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    tex.anisotropy = renderer.capabilities?.getMaxAnisotropy?.() ?? 1;
     if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
   }

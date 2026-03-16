@@ -67,11 +67,17 @@ export class TerrainApp {
     const lighting = createLighting(this.scene);
     this._hemiLight = lighting.hemi;
 
-    // IBL: generate PMREM environment map, align sun direction
-    const env = createEnvironment(this.renderer, this.scene);
-    this._envMap = env.environmentMap;
-    this._iblEnabled = true;
-    lighting.sun.position.copy(env.sunDirection).multiplyScalar(50);
+    // IBL: skip PMREM in WebGPU mode (PMREMGenerator uses WebGL internals)
+    if (this.rendererMode !== 'webgpu') {
+      const env = createEnvironment(this.renderer, this.scene);
+      this._envMap = env.environmentMap;
+      this._iblEnabled = true;
+      lighting.sun.position.copy(env.sunDirection).multiplyScalar(50);
+    } else {
+      this._envMap = null!;
+      this._iblEnabled = false;
+      console.log('[terrain] IBL disabled in WebGPU mode (PMREM not compatible)');
+    }
 
     this.dpr = createDprController(this.renderer, {
       mode: opts.dprMode || 'fixed',
@@ -85,15 +91,17 @@ export class TerrainApp {
     this._applyMovement = applyMovement;
 
     this.textures = loadTextureSet(this.renderer);
-    // WebGPU mode: use simple material (no onBeforeCompile)
+    // WebGPU mode: simple material (no onBeforeCompile)
     // WebGL mode: full biome/triplanar shader
     const { matDisp, matNoDisp } = this.rendererMode === 'webgpu'
       ? createSimpleTerrainMaterials(this.textures)
       : createTerrainMaterials(this.textures);
-    matDisp.envMap = env.environmentMap;
-    matDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
-    matNoDisp.envMap = env.environmentMap;
-    matNoDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
+    if (this._envMap) {
+      matDisp.envMap = this._envMap;
+      matDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
+      matNoDisp.envMap = this._envMap;
+      matNoDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
+    }
     this.matDisp = matDisp;
     this.matNoDisp = matNoDisp;
 
