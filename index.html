@@ -14,12 +14,34 @@
       background: rgba(0,0,0,0.6); padding: 8px 12px;
       border-radius: 4px; pointer-events: none;
     }
+    #toolbar {
+      position: absolute; top: 12px; right: 12px;
+      display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+      z-index: 10;
+    }
+    #screenshotBtn {
+      border: 0; border-radius: 6px; padding: 8px 14px;
+      font: 13px/1 monospace; background: rgba(20,20,20,0.82);
+      color: #f0f0f0; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    }
+    #screenshotBtn:hover { background: rgba(40,40,40,0.92); }
+    #screenshotBtn:disabled { opacity: 0.5; cursor: wait; }
+    #shotStatus {
+      max-width: 400px; padding: 4px 8px; border-radius: 4px;
+      background: rgba(0,0,0,0.55); color: #b8d6ff;
+      font: 11px/1.3 monospace; text-align: right; word-break: break-all;
+    }
+    #shotStatus.error { color: #ff9a9a; }
   </style>
 </head>
 <body>
   <div id="info">
-    Orbit: drag &nbsp;|&nbsp; Zoom: scroll &nbsp;|&nbsp; Pan: right-drag<br>
+    Move: WASD / arrows &nbsp;|&nbsp; Orbit: drag &nbsp;|&nbsp; Zoom: scroll<br>
     <span id="fps"></span>
+  </div>
+  <div id="toolbar">
+    <button id="screenshotBtn" type="button">Take Screenshot</button>
+    <div id="shotStatus"></div>
   </div>
 
   <script type="importmap">
@@ -861,6 +883,138 @@
     buildSlots();
     updateChunks();
 
+    // ═══════════════════════════════════════════════════════
+    // WASD / arrow-key movement
+    // ═══════════════════════════════════════════════════════
+    const _fwd = new THREE.Vector3();
+    const _right = new THREE.Vector3();
+    const _delta = new THREE.Vector3();
+    const moveState = { forward: false, back: false, left: false, right: false, fast: false };
+
+    function setMoveKey(code, down) {
+      if (code === 'KeyW' || code === 'ArrowUp')        moveState.forward = down;
+      else if (code === 'KeyS' || code === 'ArrowDown')  moveState.back = down;
+      else if (code === 'KeyA' || code === 'ArrowLeft')  moveState.left = down;
+      else if (code === 'KeyD' || code === 'ArrowRight') moveState.right = down;
+      else if (code === 'ShiftLeft' || code === 'ShiftRight') moveState.fast = down;
+      else return false;
+      return true;
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      if (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) return;
+      if (setMoveKey(e.code, true)) e.preventDefault();
+    });
+    window.addEventListener('keyup', (e) => { setMoveKey(e.code, false); });
+
+    function applyMovement(dt) {
+      _fwd.copy(controls.target).sub(camera.position);
+      _fwd.y = 0;
+      if (_fwd.lengthSq() < 1e-6) return;
+      _fwd.normalize();
+      _right.crossVectors(_fwd, camera.up).normalize();
+
+      _delta.set(0, 0, 0);
+      if (moveState.forward) _delta.add(_fwd);
+      if (moveState.back)    _delta.sub(_fwd);
+      if (moveState.right)   _delta.add(_right);
+      if (moveState.left)    _delta.sub(_right);
+      if (_delta.lengthSq() === 0) return;
+
+      const speed = moveState.fast ? 55 : 28;
+      _delta.normalize().multiplyScalar(speed * dt);
+      camera.position.add(_delta);
+      controls.target.add(_delta);
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // Screenshot button (render-to-target, no preserveDrawingBuffer)
+    // ═══════════════════════════════════════════════════════
+    const screenshotBtn = document.getElementById('screenshotBtn');
+    const shotStatusEl  = document.getElementById('shotStatus');
+    let screenshotBusy = false;
+
+    function setShotStatus(msg, err = false) {
+      shotStatusEl.textContent = msg;
+      shotStatusEl.classList.toggle('error', err);
+    }
+
+    function captureToDataURL() {
+      const sz = new THREE.Vector2();
+      renderer.getDrawingBufferSize(sz);
+      const w = Math.max(1, Math.floor(sz.x));
+      const h = Math.max(1, Math.floor(sz.y));
+      const rt = new THREE.WebGLRenderTarget(w, h, { depthBuffer: true });
+      rt.texture.colorSpace = THREE.SRGBColorSpace;
+      if (renderer.capabilities.isWebGL2) rt.samples = 4;
+
+      const prev = renderer.getRenderTarget();
+      renderer.setRenderTarget(rt);
+      renderer.render(scene, camera);
+
+      const px = new Uint8Array(w * h * 4);
+      renderer.readRenderTargetPixels(rt, 0, 0, w, h, px);
+      renderer.setRenderTarget(prev);
+      rt.dispose();
+
+      // Flip Y into temp canvas
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      const ctx = cv.getContext('2d');
+      const img = ctx.createImageData(w, h);
+      for (let y = 0; y < h; y++) {
+        const src = (h - 1 - y) * w * 4;
+        img.data.set(px.subarray(src, src + w * 4), y * w * 4);
+      }
+      ctx.putImageData(img, 0, 0);
+      return cv.toDataURL('image/png');
+    }
+
+    async function copyToClipboard(text) {
+      try {
+        if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+      } catch {}
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px';
+        document.body.appendChild(ta); ta.select();
+        const ok = document.execCommand('copy'); ta.remove(); return ok;
+      } catch { return false; }
+    }
+
+    async function takeScreenshot() {
+      if (screenshotBusy) return;
+      screenshotBusy = true;
+      screenshotBtn.disabled = true;
+      setShotStatus('Capturing...');
+      try {
+        controls.update(); updateChunks();
+        renderer.render(scene, camera);
+
+        const image = captureToDataURL();
+        const label = `terrain_${centerCX}_${centerCZ}`;
+        const resp = await fetch('/api/screenshot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image, label, format: 'png' }),
+        });
+        if (!resp.ok) throw new Error(`upload ${resp.status}`);
+        const result = await resp.json();
+        const copied = await copyToClipboard(result.filename);
+        const url = new URL(result.path, location.href).href;
+        setShotStatus(`${result.filename}${copied ? ' (copied)' : ''} — ${url}`);
+      } catch (err) {
+        console.error('[screenshot]', err);
+        setShotStatus(`Failed: ${err.message}`, true);
+      } finally {
+        screenshotBusy = false;
+        screenshotBtn.disabled = false;
+      }
+    }
+
+    screenshotBtn.addEventListener('click', takeScreenshot);
+
     // ───── Resize ─────
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
@@ -878,16 +1032,21 @@
     // ───── FPS ─────
     const fpsEl = document.getElementById('fps');
     let frameCount = 0, lastTime = performance.now();
+    let prevTime = performance.now();
 
     // ───── Animate ─────
     function animate() {
       requestAnimationFrame(animate);
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - prevTime) / 1000);
+      prevTime = now;
+
+      applyMovement(dt);
       controls.update();
       updateChunks();
       renderer.render(scene, camera);
 
       frameCount++;
-      const now = performance.now();
       if (now - lastTime >= 500) {
         fpsEl.textContent = `${(frameCount / ((now - lastTime) / 1000)).toFixed(0)} fps`;
         frameCount = 0;
@@ -896,7 +1055,7 @@
     }
 
     animate();
-    console.log('[terrain] v8 — procedural foliage instancing');
+    console.log('[terrain] v8.1 — WASD movement + screenshot UI');
   </script>
 </body>
 </html>
