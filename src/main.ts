@@ -12,8 +12,10 @@ import { createScreenshotUi } from './ui/screenshotUi';
 import { createDprButtons } from './ui/dprButtons';
 
 // ── Parse URL params ──
-const debugMode = location.search.includes('debug');
-const dprParam = new URLSearchParams(location.search).get('dpr');
+const params = new URLSearchParams(location.search);
+const debugMode = params.has('debug');
+const dprParam = params.get('dpr');
+const rendererMode = params.get('renderer') === 'webgpu' ? 'webgpu' as const : 'webgl' as const;
 let dprMode: 'fixed' | 'auto' = 'fixed';
 let dprInitial = 2;
 if (dprParam === 'auto') {
@@ -24,11 +26,12 @@ if (dprParam === 'auto') {
   if (v >= 1.0 && v <= Math.min(window.devicePixelRatio, 2)) dprInitial = v;
 }
 
-// ── Create engine ──
-const app = new TerrainApp(document.body, {
+// ── Create engine (async for WebGPU support) ──
+const app = await TerrainApp.createAsync(document.body, {
   debug: debugMode,
   dprMode,
   dprInitial,
+  rendererMode,
 });
 
 // ── Wire UI ──
@@ -95,4 +98,4 @@ function animate() {
 }
 
 animate();
-console.log(`[terrain] v11.1 — revZ: ${app.reversedDepthSupported}, IBL: ${app.isIblEnabled()} (mode: ${app.dpr.ctrl.mode})`);
+console.log(`[terrain] spike — renderer: ${app.rendererMode}, revZ: ${app.reversedDepthSupported}, IBL: ${app.isIblEnabled()}`);

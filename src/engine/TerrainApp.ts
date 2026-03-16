@@ -9,12 +9,14 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, TextureSet } from './types';
 import type { DprController } from './controls/dprController';
 
-import { createRenderer, createScene, createCamera, createLighting } from './core/renderer';
+import { createRenderer, createRendererAsync, type RendererMode, type RendererResult } from './core/renderer';
+import { createScene, createCamera, createLighting } from './core/renderer';
 import { createEnvironment } from './core/environment';
 import { createOrbitMovement } from './controls/orbitMovement';
 import { createDprController } from './controls/dprController';
 import { loadTextureSet } from './materials/textureSet';
 import { createTerrainMaterials } from './materials/terrainMaterial';
+import { createSimpleTerrainMaterials } from './materials/simpleMaterial';
 import { createChunkSlot, rebuildChunkSlot } from './terrain/chunkGeometry';
 import { createFoliageSystem } from './foliage/foliageSystem';
 import { CHUNK_SIZE, LOD_NEAR, LOD_MID, LOD_FAR, GRID_RADIUS, TERRAIN_ENV_INTENSITY, FOLIAGE_ENV_INTENSITY } from './config';
@@ -23,6 +25,7 @@ export class TerrainApp {
   readonly debug: boolean;
   readonly renderer: WebGLRenderer;
   readonly reversedDepthSupported: boolean;
+  readonly rendererMode: RendererMode;
   readonly scene: Scene;
   readonly camera: PerspectiveCamera;
   readonly controls: OrbitControls;
@@ -41,12 +44,22 @@ export class TerrainApp {
   private _iblEnabled: boolean;
   private _hemiLight: THREE.HemisphereLight;
   private _envMap: THREE.Texture;
-  private _foliageRockMat: THREE.MeshStandardMaterial | null = null;
 
-  constructor(container: HTMLElement, opts: TerrainAppOptions = {}) {
+  /** Async factory for WebGPU mode. Falls back to WebGL if unavailable. */
+  static async createAsync(container: HTMLElement, opts: TerrainAppOptions = {}): Promise<TerrainApp> {
+    if (opts.rendererMode === 'webgpu') {
+      const result = await createRendererAsync({ mode: 'webgpu', preserveDrawingBuffer: opts.debug });
+      return new TerrainApp(container, opts, result);
+    }
+    return new TerrainApp(container, opts);
+  }
+
+  constructor(container: HTMLElement, opts: TerrainAppOptions = {}, prebuiltRenderer?: RendererResult) {
     this.debug = opts.debug || false;
 
-    const { renderer, reversedDepthSupported } = createRenderer({ preserveDrawingBuffer: this.debug });
+    const { renderer, reversedDepthSupported, mode } = prebuiltRenderer
+      ?? createRenderer({ preserveDrawingBuffer: this.debug });
+    this.rendererMode = mode;
     this.renderer = renderer;
     this.reversedDepthSupported = reversedDepthSupported;
     this.scene = createScene();
@@ -72,7 +85,11 @@ export class TerrainApp {
     this._applyMovement = applyMovement;
 
     this.textures = loadTextureSet(this.renderer);
-    const { matDisp, matNoDisp } = createTerrainMaterials(this.textures);
+    // WebGPU mode: use simple material (no onBeforeCompile)
+    // WebGL mode: full biome/triplanar shader
+    const { matDisp, matNoDisp } = this.rendererMode === 'webgpu'
+      ? createSimpleTerrainMaterials(this.textures)
+      : createTerrainMaterials(this.textures);
     matDisp.envMap = env.environmentMap;
     matDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
     matNoDisp.envMap = env.environmentMap;
