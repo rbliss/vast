@@ -3,11 +3,11 @@
  * Combines multiple noise layers into the macro terrain shape.
  */
 
-import { fbm, ridgedFBM } from './noise.js';
+import { fbm, ridgedFBM } from './noise';
 
 export const MACRO_HEIGHT_SCALE = 12;
 
-export function terrainHeight(x, z) {
+export function terrainHeight(x: number, z: number): number {
   const broad = fbm(x * 0.012, z * 0.012, 4, 2.0, 0.5) * 0.5 + 0.5;
   const ridged = ridgedFBM(x * 0.025, z * 0.025, 4, 2.0, 0.45);
   const medium = fbm(x * 0.05, z * 0.05, 3, 2.0, 0.5) * 0.5 + 0.5;

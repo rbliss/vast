@@ -1,19 +1,30 @@
 /**
  * Screenshot button: capture, upload, clipboard.
- * Receives renderer/scene/camera — no engine internals needed.
  */
 
 import * as THREE from 'three';
+import type { WebGLRenderer, Scene, PerspectiveCamera } from 'three';
 
-export function createScreenshotUi(btnEl, statusEl, { renderer, scene, camera, getLabel }) {
+interface ScreenshotOpts {
+  renderer: WebGLRenderer;
+  scene: Scene;
+  camera: PerspectiveCamera;
+  getLabel: () => string;
+}
+
+export function createScreenshotUi(
+  btnEl: HTMLButtonElement,
+  statusEl: HTMLElement,
+  { renderer, scene, camera, getLabel }: ScreenshotOpts,
+) {
   let busy = false;
 
-  function setStatus(msg, err = false) {
+  function setStatus(msg: string, err = false) {
     statusEl.textContent = msg;
     statusEl.classList.toggle('error', err);
   }
 
-  function captureToDataURL() {
+  function captureToDataURL(): string {
     const sz = new THREE.Vector2();
     renderer.getDrawingBufferSize(sz);
     const w = Math.max(1, Math.floor(sz.x));
@@ -33,7 +44,7 @@ export function createScreenshotUi(btnEl, statusEl, { renderer, scene, camera, g
 
     const cv = document.createElement('canvas');
     cv.width = w; cv.height = h;
-    const ctx = cv.getContext('2d');
+    const ctx = cv.getContext('2d')!;
     const img = ctx.createImageData(w, h);
     for (let y = 0; y < h; y++) {
       const src = (h - 1 - y) * w * 4;
@@ -43,10 +54,10 @@ export function createScreenshotUi(btnEl, statusEl, { renderer, scene, camera, g
     return cv.toDataURL('image/png');
   }
 
-  async function copyToClipboard(text) {
+  async function copyToClipboard(text: string): Promise<boolean> {
     try {
       if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
-    } catch {}
+    } catch { /* fallback below */ }
     try {
       const ta = document.createElement('textarea');
       ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px';
@@ -74,9 +85,9 @@ export function createScreenshotUi(btnEl, statusEl, { renderer, scene, camera, g
       const copied = await copyToClipboard(result.filename);
       const url = new URL(result.path, location.href).href;
       setStatus(`${result.filename}${copied ? ' (copied)' : ''} — ${url}`);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('[screenshot]', err);
-      setStatus(`Failed: ${err.message}`, true);
+      setStatus(`Failed: ${err instanceof Error ? err.message : err}`, true);
     } finally {
       busy = false;
       btnEl.disabled = false;

@@ -1,14 +1,20 @@
 /**
  * HUD: FPS counter + DPR info display.
- * Writes to an existing DOM element.
  */
 
-export function createHud(fpsEl) {
+import type { DprCtrlState } from '../engine/controls/dprController';
+
+export interface HudTickResult {
+  fps: number;
+  elapsed: number;
+}
+
+export function createHud(fpsEl: HTMLElement) {
   let frameCount = 0;
   let lastTime = performance.now();
   let lastFps = 0;
 
-  function tick(now, dprCtrl) {
+  function tick(now: number, dprCtrl: DprCtrlState): HudTickResult | null {
     frameCount++;
     const elapsed = now - lastTime;
     if (elapsed >= 500) {

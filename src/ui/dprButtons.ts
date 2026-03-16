@@ -1,11 +1,12 @@
 /**
  * DPR manual control buttons + URL sync.
- * Receives a DPR controller instance — no engine internals.
  */
 
-export function createDprButtons(containerEl, dprController) {
+import type { DprController } from '../engine/controls/dprController';
+
+export function createDprButtons(containerEl: HTMLElement, dprController: DprController) {
   const { ctrl, setMode } = dprController;
-  const buttons = containerEl.querySelectorAll('button[data-dpr]');
+  const buttons = containerEl.querySelectorAll<HTMLButtonElement>('button[data-dpr]');
 
   function updateHighlights() {
     buttons.forEach(btn => {
@@ -14,7 +15,7 @@ export function createDprButtons(containerEl, dprController) {
         btn.classList.toggle('active', ctrl.mode === 'auto');
       } else {
         btn.classList.toggle('active',
-          ctrl.mode === 'fixed' && Math.abs(parseFloat(val) - ctrl.current) < 0.01);
+          ctrl.mode === 'fixed' && Math.abs(parseFloat(val!) - ctrl.current) < 0.01);
       }
     });
   }
@@ -25,7 +26,7 @@ export function createDprButtons(containerEl, dprController) {
     history.replaceState(null, '', '?' + params.toString());
   }
 
-  function handleClick(mode, value) {
+  function handleClick(mode: 'fixed' | 'auto', value?: number) {
     setMode(mode, value);
     updateHighlights();
     updateUrl();
@@ -35,7 +36,7 @@ export function createDprButtons(containerEl, dprController) {
     btn.addEventListener('click', () => {
       const val = btn.dataset.dpr;
       if (val === 'auto') handleClick('auto');
-      else handleClick('fixed', parseFloat(val));
+      else handleClick('fixed', parseFloat(val!));
     });
   });
 
