@@ -1,7 +1,7 @@
 {
-  "name": "terrain",
+  "name": "vast",
   "version": "1.0.0",
-  "description": "",
+  "description": "Procedural terrain playground — WebGPU, three.js, TSL",
   "main": "index.js",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 8080 --strictPort",

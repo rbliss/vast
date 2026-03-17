@@ -1,6 +1,6 @@
 # Procedural Terrain Playground
 
-A browser-based terrain rendering playground built with **three.js** for experimenting with **realistic, performant, procedurally generated 3D terrain**.
+A browser-based terrain rendering playground built with **three.js WebGPU** for experimenting with **realistic, performant, procedurally generated 3D terrain**.
 
 ## Goals
 
@@ -16,7 +16,7 @@ A browser-based terrain rendering playground built with **three.js** for experim
 - **Slope-aware tri-planar mapping** for rock on steep surfaces
 - **Biome blending** for grass / dirt / rock
 - **Chunked terrain LOD** with:
-  - fixed 25-slot pool
+  - fixed 81-slot pool (9×9 grid)
   - zero-allocation traversal
   - edge stitching
   - skirts
@@ -48,7 +48,7 @@ The project is organized around a few core systems:
 
 ## Tech Stack
 
-- **three.js**
+- **three.js** (WebGPU renderer, TSL/NodeMaterial)
 - **Express** API server for screenshot upload / verification
 - **Poly Haven** terrain textures
 - **Vite** for modular ES module builds and dev server
@@ -59,14 +59,14 @@ The project is organized around a few core systems:
 
 The app runs as two systemd services:
 
-- **terrain-vite** — frontend on `http://beyond-all-reason:8080/`
-- **terrain-api** — screenshot API on `:8081`, proxied through Vite at `/api/*`
+- **vast-vite** — frontend on `https://beyond-all-reason:8080/`
+- **vast-api** — screenshot API on `:8081`, proxied through Vite at `/api/*`
 
 Useful commands:
 
 ```bash
-sudo systemctl status terrain-vite terrain-api
-sudo systemctl restart terrain-vite terrain-api
+sudo systemctl status vast-vite vast-api
+sudo systemctl restart vast-vite vast-api
 ```
 
 ### Local dev
@@ -78,8 +78,8 @@ npm run dev
 
 Then open:
 
-- `http://localhost:8080/` — Vite app
-- `http://localhost:8080/api/screenshots` — proxied screenshot API
+- `https://localhost:8080/` — Vite app
+- `https://localhost:8080/api/screenshots` — proxied screenshot API
 
 ### Legacy standalone fallback
 
@@ -93,6 +93,7 @@ directly by any static file server.
 - `?dpr=1`
 - `?dpr=1.5`
 - `?dpr=2`
+- `?ibl=off` — disable image-based lighting
 
 ## Project Direction
 

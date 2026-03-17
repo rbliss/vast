@@ -60,7 +60,7 @@ export const webgpuBackend: RendererBackend = {
     await renderer.init();
 
     console.log('[backend:webgpu] renderer created');
-    return { renderer: renderer as unknown as import('three').WebGLRenderer, reversedDepthSupported: false };
+    return { renderer: renderer as unknown as import('./types').RendererLike, reversedDepthSupported: false };
   },
 
   createScene() {

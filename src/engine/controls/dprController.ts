@@ -3,7 +3,7 @@
  * Pure logic — no DOM dependencies. Renderer passed in.
  */
 
-import type { WebGLRenderer } from 'three';
+import type { RendererLike } from '../backend/types';
 
 export interface DprCtrlState {
   mode: 'fixed' | 'auto';
@@ -42,7 +42,7 @@ function snapToBucket(v: number): number {
   return BUCKETS.reduce((best, b) => Math.abs(b - v) < Math.abs(best - v) ? b : best);
 }
 
-export function createDprController(renderer: WebGLRenderer, opts: DprOpts = {}): DprController {
+export function createDprController(renderer: RendererLike, opts: DprOpts = {}): DprController {
   const maxDpr = Math.min(window.devicePixelRatio, 2);
   const ctrl: DprCtrlState = {
     mode: opts.mode || 'fixed',

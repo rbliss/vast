@@ -42,9 +42,6 @@ const snapshotUi = createScreenshotUi(
   mustEl<HTMLButtonElement>('screenshotBtn'),
   mustEl('shotStatus'),
   {
-    renderer: app.renderer,
-    scene: app.scene,
-    camera: app.camera,
     getLabel: () => `terrain_${app.centerCX}_${app.centerCZ}`,
     captureFrame: () => app.captureFrame(),
     getSnapshotState: () => app.getSnapshotState(),

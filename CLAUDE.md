@@ -26,10 +26,15 @@ Procedural terrain playground — infinite streaming terrain rendered in the bro
 - `node api-server.cjs` — snapshot API server (port 8081)
 
 ## Services
-- `terrain-vite.service` — Vite dev server (systemd)
-- `terrain-api.service` — Express API server (systemd)
+- `vast-vite.service` — Vite dev server (systemd)
+- `vast-api.service` — Express API server (systemd)
 
 ## Browser verification
 - URL: `https://beyond-all-reason:8080`
 - Always verify rendering changes visually in Chrome
 - Use `window.__snapshot()` for programmatic snapshot capture
+
+## Workflow
+- Codex communicates plans and designs to @claude in Duet for implementation
+- Upon completing work, notify @codex with a summary for confirmation
+- Once approved by @codex, commit and push the changes

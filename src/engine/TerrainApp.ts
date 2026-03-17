@@ -4,11 +4,11 @@
  */
 
 import * as THREE from 'three';
-import type { WebGLRenderer, Scene, PerspectiveCamera, MeshStandardMaterial } from 'three';
+import type { Scene, PerspectiveCamera, MeshStandardMaterial } from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, TextureSet, TerrainMaterials } from './types';
 import type { DprController } from './controls/dprController';
-import type { RendererBackend } from './backend/types';
+import type { RendererBackend, RendererLike } from './backend/types';
 
 import { getBackend } from './backend';
 import { createOrbitMovement } from './controls/orbitMovement';
@@ -26,7 +26,7 @@ import { TERRAIN_ENV_MAP_INTENSITY, HEMI_INTENSITY_IBL_ON, HEMI_INTENSITY_IBL_OF
 
 export class TerrainApp {
   readonly debug: boolean;
-  readonly renderer: WebGLRenderer;
+  readonly renderer: RendererLike;
   readonly reversedDepthSupported: boolean;
   readonly scene: Scene;
   readonly camera: PerspectiveCamera;
@@ -65,7 +65,7 @@ export class TerrainApp {
     container: HTMLElement,
     opts: TerrainAppOptions,
     backend: RendererBackend,
-    renderer: WebGLRenderer,
+    renderer: RendererLike,
     reversedDepthSupported: boolean,
     materialFactory: (textures: TextureSet) => TerrainMaterials,
   ) {

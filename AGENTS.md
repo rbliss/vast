@@ -24,3 +24,8 @@ Responsibilities:
 - Prefer the **WebGPU-first** path
 - Keep the engine focused on the best forward-looking architecture
 - Use Codex for planning/review and Claude for execution
+
+## Workflow
+- When asked for plans or designs, Codex communicates them to @claude in Duet for implementation
+- Claude implements the plan, then notifies @codex with a summary for confirmation
+- Once approved by @codex, Claude commits and pushes the changes

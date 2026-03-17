@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import type { WebGLRenderer, Texture } from 'three';
+import type { Texture } from 'three';
 import type { TextureSet } from '../types';
+import type { RendererLike } from '../backend/types';
 
-export function loadTextureSet(renderer: WebGLRenderer): TextureSet {
+export function loadTextureSet(renderer: RendererLike): TextureSet {
   const loader = new THREE.TextureLoader();
 
   function loadTex(path: string, srgb = false): Texture {

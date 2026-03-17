@@ -1,13 +1,13 @@
 [Unit]
-Description=Terrain Screenshot API (port 8081)
+Description=VAST Screenshot API (port 8081)
 After=network.target
 
 [Service]
 Type=simple
 User=claude
-WorkingDirectory=/home/claude/terrain
+WorkingDirectory=/home/claude/vast
 Environment=PORT=8081
-ExecStart=/usr/bin/node /home/claude/terrain/api-server.cjs
+ExecStart=/usr/bin/node /home/claude/vast/api-server.cjs
 Restart=always
 RestartSec=2
 

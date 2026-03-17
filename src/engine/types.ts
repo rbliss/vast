@@ -77,14 +77,6 @@ export interface FoliageSystem {
   rebuild: (foliage: FoliagePayload, cx: number, cz: number, isFar: boolean) => void;
 }
 
-/** Screenshot API response shape. */
-export interface ScreenshotUploadResponse {
-  ok: boolean;
-  filename: string;
-  path: string;
-  size: number;
-}
-
 /** Snapshot API response shape. */
 export interface SnapshotUploadResponse {
   ok: boolean;
