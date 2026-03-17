@@ -48,14 +48,14 @@ export interface StreamPowerParams {
 }
 
 export const DEFAULT_STREAM_POWER: StreamPowerParams = {
-  iterations: 25,
-  erosionK: 0.004,
-  areaExponent: 0.45,
+  iterations: 35,
+  erosionK: 0.006,
+  areaExponent: 0.5,
   slopeExponent: 1.0,
   dt: 1.0,
-  diffusionRate: 0.01,
+  diffusionRate: 0.005,
   minSlope: 0.001,
-  upliftRate: 0.15,
+  upliftRate: 0.1,
   maxErosion: 0.5,
   depositionEnabled: true,
   sedimentFraction: 0.6,

@@ -28,13 +28,13 @@ export interface ChannelGeometryParams {
 }
 
 export const DEFAULT_CHANNEL_PARAMS: ChannelGeometryParams = {
-  minArea: 30,
-  widthCoeff: 0.6,
-  widthExponent: 0.45,
-  depthCoeff: 0.15,
-  depthExponent: 0.35,
-  maxHalfWidth: 8,
-  bankSteepness: 0.5,
+  minArea: 25,
+  widthCoeff: 0.8,
+  widthExponent: 0.48,
+  depthCoeff: 0.2,
+  depthExponent: 0.38,
+  maxHalfWidth: 10,
+  bankSteepness: 0.45,
 };
 
 /**
