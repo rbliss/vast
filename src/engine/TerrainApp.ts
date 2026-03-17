@@ -224,7 +224,7 @@ export class TerrainApp {
     if (enabled) {
       (this.scene as any).fog = null;
     } else {
-      (this.scene as any).fog = new THREE.FogExp2(0x87ceeb, 0.005);
+      (this.scene as any).fog = new THREE.FogExp2(0x87ceeb, 0.0015);
     }
   }
 

@@ -53,9 +53,43 @@ const triSample = Fn(([tex, wPos, wNorm, scale]: [any, any, any, any]) => {
     .add(texture(tex, wPos.xy.mul(scale)).mul(ws.z));
 });
 
+// ── Anti-tiling: dual-scale tri-planar with macro variation ──
+// Samples at two scales and blends with low-frequency noise to break repetition.
+// Also applies a macro tint shift for landscape-scale color variation.
+
+const triSampleAntiTile = Fn(([tex, wPos, wNorm, scale]: [any, any, any, any]) => {
+  // Primary scale (detail)
+  const primary = triSample(tex, wPos, wNorm, scale);
+
+  // Secondary scale (macro — ~0.31x to avoid exact harmonic alignment)
+  const macroScale = scale.mul(0.31);
+  const secondary = triSample(tex, wPos, wNorm, macroScale);
+
+  // Blend mask: low-frequency noise determines which scale dominates locally
+  const blendNoise = biomeNoise(wPos.xz.mul(0.008));
+  const blendFactor = smoothstep(float(0.35), float(0.65), blendNoise);
+
+  // Mix scales
+  const mixed = mix(primary, secondary, blendFactor.mul(0.4));
+
+  // Macro tint variation: subtle hue/value shift at landscape scale
+  const tintNoise = biomeNoise(wPos.xz.mul(0.003).add(vec2(17.3, 31.7)));
+  const tintShift = tintNoise.sub(0.5).mul(0.12);
+  return mixed.add(vec4(tintShift, tintShift.mul(0.8), tintShift.mul(0.5), 0));
+});
+
+// ── Sediment color: lighter, smoother than dirt (deposited alluvium) ──
+const SEDIMENT_COLOR = vec3(0.45, 0.42, 0.36);
+const SEDIMENT_ROUGHNESS = float(0.78);
+
 // ── Field-driven biome weights ──
 // Reads from field texture: R=slope, G=normalizedAltitude, B=curvature, A=flowProxy
 // Returns vec4(rock, grass, dirt, snow) normalized
+
+// Returns: { rock, grass, dirt, snow, sediment } as separate floats via a struct-like object
+// We pack into two outputs since TSL doesn't do structs well:
+//   weights1 = vec4(rock, grass, dirt, snow)
+//   sedimentWeight = float
 
 const fieldBiomeWeights = Fn(([wPos, wNorm, fieldTex, fieldExtent]: [any, any, any, any]) => {
   // Sample field texture (world XZ → UV in [-extent, extent] → [0, 1])
@@ -66,47 +100,74 @@ const fieldBiomeWeights = Fn(([wPos, wNorm, fieldTex, fieldExtent]: [any, any, a
   const fieldCurvature = fields.b;
   const fieldFlow = fields.a;
 
-  // Also use geometric slope as fallback for areas outside field coverage
+  // Geometric slope fallback
   const geoSlope = float(1).sub(abs(wNorm.y));
 
-  // Blend between field and geometric slope (field dominates inside coverage)
+  // Field coverage mask (smooth edges)
   const inField = smoothstep(float(0.01), float(0.05), fieldUV.x)
     .mul(smoothstep(float(0.01), float(0.05), fieldUV.y))
     .mul(smoothstep(float(0.99), float(0.95), fieldUV.x))
     .mul(smoothstep(float(0.99), float(0.95), fieldUV.y));
   const slope = mix(geoSlope, fieldSlope.mul(0.5), inField);
 
-  // Breakup noise (prevents banding at transitions)
+  // Breakup noise
   const bn = biomeNoise(wPos.xz.mul(0.04));
   const detailNoise = biomeNoise(wPos.xz.mul(0.12)).mul(0.15);
 
-  // ── Snow: high altitude + not too steep ──
-  const snowBase = smoothstep(float(0.72), float(0.88), fieldAlt.add(detailNoise));
-  const snowSlopeMask = smoothstep(float(0.8), float(0.5), slope); // less snow on steep faces
+  // ── Snow: high altitude + flat (tighter threshold, less noise influence) ──
+  const snowBase = smoothstep(float(0.78), float(0.92), fieldAlt.add(detailNoise.mul(0.5)));
+  const snowSlopeMask = smoothstep(float(0.7), float(0.4), slope);
   const snow = snowBase.mul(snowSlopeMask).mul(inField);
 
-  // ── Rock: steep slopes or very high altitude ──
+  // ── Rock: steep or high altitude ──
   const rockFromSlope = smoothstep(float(0.3), float(0.6), slope.add(detailNoise.mul(0.3)));
   const rockFromAlt = smoothstep(float(0.6), float(0.8), fieldAlt).mul(0.4).mul(inField);
   const rock = max(rockFromSlope, rockFromAlt);
 
-  // ── Grass: flat, mid altitude, not too wet ──
+  // ── Sediment: high flow + low slope + negative curvature (concave/depositional) ──
   const flatness = float(1).sub(rock);
+  const sedimentFromFlow = smoothstep(float(0.3), float(0.6), fieldFlow).mul(inField);
+  const sedimentFromCurvature = smoothstep(float(-0.5), float(-2.0), fieldCurvature).mul(0.3).mul(inField);
+  const sedimentSlopeMask = smoothstep(float(0.3), float(0.1), slope);
+  const sediment = flatness.mul(sedimentFromFlow.add(sedimentFromCurvature)).mul(sedimentSlopeMask);
+
+  // ── Grass: flat, mid altitude, not in wet channels ──
   const grassAlt = smoothstep(float(0.15), float(0.35), fieldAlt)
     .mul(smoothstep(float(0.75), float(0.55), fieldAlt));
   const grassNoise = smoothstep(float(0.3), float(0.65), bn);
-  const grassFlowDamp = smoothstep(float(0.5), float(0.3), fieldFlow.mul(inField)); // less grass in wet channels
-  const grass = flatness.mul(grassAlt.mul(inField).add(grassNoise.mul(float(1).sub(inField))))
+  const grassFlowDamp = smoothstep(float(0.45), float(0.25), fieldFlow.mul(inField));
+  const grass = flatness.mul(float(1).sub(sediment))
+    .mul(grassAlt.mul(inField).add(grassNoise.mul(float(1).sub(inField))))
     .mul(grassFlowDamp.mul(inField).add(float(1).sub(inField)));
 
-  // ── Dirt: fills remaining weight, boosted by flow/deposition ──
-  const dirtBase = flatness.mul(float(1).sub(grass).sub(snow));
-  const flowBoost = fieldFlow.mul(0.3).mul(inField);
-  const dirt = max(float(0), dirtBase.add(flowBoost));
+  // ── Dirt: remaining weight ──
+  const dirt = max(float(0), flatness.mul(float(1).sub(grass).sub(snow).sub(sediment)));
 
-  // Normalize
-  const sum = rock.add(grass).add(dirt).add(snow).add(1e-6);
-  return vec4(rock.div(sum), grass.div(sum), dirt.div(sum), snow.div(sum));
+  // Normalize all 5
+  const sum = rock.add(grass).add(dirt).add(snow).add(sediment).add(1e-6);
+  // Pack: vec4(rock, grass, dirt, snow) + we encode sediment in a creative way
+  // Use .w for snow, and we'll compute sediment separately
+  // Actually, return vec4 and encode sediment as: sediment steals from dirt
+  const normRock = rock.div(sum);
+  const normGrass = grass.div(sum);
+  const normDirt = dirt.div(sum);
+  const normSnow = snow.div(sum);
+  const normSediment = sediment.div(sum);
+
+  // Pack: x=rock, y=grass, z=dirt+sediment combined, w=snow
+  // Store sediment ratio in dirt channel: we'll split it in the color function
+  // Simpler: just return 4 weights where dirt includes sediment, and separately
+  // compute sediment fraction for color mixing
+  // Actually easiest: return vec4(rock, grass, dirtFraction, snow) where
+  // dirtFraction = dirt + sediment, and separately compute sediment ratio
+  const dirtTotal = normDirt.add(normSediment);
+  const sedimentRatio = normSediment.div(dirtTotal.add(1e-6)); // 0 = pure dirt, 1 = pure sediment
+
+  // Return: x=rock, y=grass, z=dirt+sediment, w=snow
+  // We'll pass sedimentRatio separately via a second call or encode it
+  // For simplicity, use a 5th "channel" by packing sedimentRatio into negative z range
+  // No, let's just return vec4 and reconstruct sediment from flow in the color function
+  return vec4(normRock, normGrass, dirtTotal, normSnow);
 });
 
 // Rock tri-planar normal with Whiteout blending
@@ -160,9 +221,20 @@ export function createNodeTerrainMaterials(
 
       if (fieldMap) {
         const bw = fieldBiomeWeights(wp, wn, fieldMap, extentU);
-        const rc = triSample(textures.rockDiff, wp, wn, rk);
+
+        // Rock: anti-tiled dual-scale tri-planar
+        const rc = triSampleAntiTile(textures.rockDiff, wp, wn, rk);
+
+        // Grass
         const gc = texture(textures.grassDiff, wp.xz.mul(gr));
-        const dc = texture(textures.dirtDiff, wp.xz.mul(dt));
+
+        // Dirt + sediment blend: use flow field to mix between dirt texture and sediment color
+        const fieldUV = wp.xz.div(extentU.mul(2)).add(0.5);
+        const flow = texture(fieldMap, fieldUV).a;
+        const sedimentMix = smoothstep(float(0.45), float(0.7), flow);
+        const dirtColor = texture(textures.dirtDiff, wp.xz.mul(dt));
+        const dc = mix(dirtColor, vec4(SEDIMENT_COLOR, 1.0), sedimentMix.mul(0.35));
+
         return rc.mul(bw.x).add(gc.mul(bw.y)).add(dc.mul(bw.z)).add(SNOW_COLOR.mul(bw.w));
       }
 
@@ -187,9 +259,13 @@ export function createNodeTerrainMaterials(
 
       if (fieldMap) {
         const bw = fieldBiomeWeights(wp, wn, fieldMap, extentU);
-        const rr = triSample(textures.rockRough, wp, wn, rk).g;
+        const rr = triSampleAntiTile(textures.rockRough, wp, wn, rk).g;
         const gR = texture(textures.grassRough, wp.xz.mul(gr)).g;
-        const dR = texture(textures.dirtRough, wp.xz.mul(dt)).g;
+        // Dirt roughness blended with smoother sediment roughness
+        const fieldUV = wp.xz.div(extentU.mul(2)).add(0.5);
+        const flow = texture(fieldMap, fieldUV).a;
+        const sedimentMixR = smoothstep(float(0.45), float(0.7), flow);
+        const dR = mix(texture(textures.dirtRough, wp.xz.mul(dt)).g, SEDIMENT_ROUGHNESS, sedimentMixR.mul(0.3));
         return rr.mul(bw.x).add(gR.mul(bw.y)).add(dR.mul(bw.z)).add(SNOW_ROUGHNESS.mul(bw.w));
       }
 
