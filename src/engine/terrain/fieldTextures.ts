@@ -16,6 +16,8 @@ import type { TerrainSource } from './terrainSource';
 export interface FieldTextures {
   /** RGBA float texture: R=slope, G=normalizedAltitude, B=curvature, A=depositionOrFlow */
   fieldMap: THREE.DataTexture;
+  /** Single-channel float texture: raw terrain height at each cell */
+  heightMap: THREE.DataTexture;
   /** World-space bounds of the field map */
   extent: number;
   /** CPU-side field sampler for scatter/foliage placement */
@@ -164,7 +166,17 @@ export function generateFieldTextures(
     }
   }
 
-  // Create DataTexture
+  // Create height texture (raw heights for water depth calculation)
+  const heightData = new Float32Array(n * n);
+  heightData.set(heights);
+  const heightMap = new THREE.DataTexture(heightData, n, n, THREE.RedFormat, THREE.FloatType);
+  heightMap.wrapS = THREE.ClampToEdgeWrapping;
+  heightMap.wrapT = THREE.ClampToEdgeWrapping;
+  heightMap.magFilter = THREE.LinearFilter;
+  heightMap.minFilter = THREE.LinearFilter;
+  heightMap.needsUpdate = true;
+
+  // Create field texture
   const fieldMap = new THREE.DataTexture(data, n, n, THREE.RGBAFormat, THREE.FloatType);
   fieldMap.wrapS = THREE.ClampToEdgeWrapping;
   fieldMap.wrapT = THREE.ClampToEdgeWrapping;
@@ -211,8 +223,9 @@ export function generateFieldTextures(
 
   return {
     fieldMap,
+    heightMap,
     extent,
     sampleAt,
-    dispose: () => fieldMap.dispose(),
+    dispose: () => { fieldMap.dispose(); heightMap.dispose(); },
   };
 }

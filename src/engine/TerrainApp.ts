@@ -164,13 +164,15 @@ export class TerrainApp {
     // Foliage
     this.foliage = createFoliageSystem(this.scene, FOLIAGE_ENV_INTENSITY);
 
-    // Water
+    // Water (needs height texture for terrain-depth shading)
     const waterLevel = opts.waterLevel;
-    if (waterLevel != null) {
-      this._water = createWaterSystem(this.scene as any, terrainSource, {
-        ...DEFAULT_WATER_CONFIG,
-        waterLevel,
-      });
+    if (waterLevel != null && fieldTextures) {
+      this._water = createWaterSystem(
+        this.scene as any,
+        fieldTextures.heightMap,
+        fieldTextures.extent,
+        { ...DEFAULT_WATER_CONFIG, waterLevel },
+      );
     } else {
       this._water = null;
     }

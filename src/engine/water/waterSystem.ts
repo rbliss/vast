@@ -1,46 +1,38 @@
 /**
  * Water body rendering.
  *
- * A flat plane at configurable water level with:
- *   - Depth-based color (shallow → deep gradient)
- *   - Shoreline foam/edge blend
- *   - Subtle animated waves via vertex displacement
- *   - Fresnel-based reflectivity
- *   - Compatible with aerial perspective
+ * Uses a terrain height texture to compute real depth below the water
+ * surface, enabling terrain-driven shoreline transitions and depth color.
  *
- * Uses TSL/NodeMaterial for WebGPU rendering.
+ * Features:
+ *   - Terrain-relative depth color (shallow → deep from actual height data)
+ *   - Shoreline foam/wet edge where water meets terrain
+ *   - Water masking: transparent where terrain is above water level
+ *   - Fresnel-based sky reflection
+ *   - Animated wave displacement
+ *   - Sun warmth coherence via shared uniform
  */
 
 // @ts-nocheck — TSL types not fully typed
 import * as THREE from 'three';
 import { MeshStandardNodeMaterial } from 'three/webgpu';
 import {
-  Fn, float, vec2, vec3, vec4,
-  uniform, mix, smoothstep, abs, normalize, dot, pow, sin, cos, clamp, max,
+  Fn, float, vec3, vec4,
+  uniform, mix, smoothstep, abs, normalize, dot, pow, sin, cos, clamp, max, sub,
   positionWorld, positionLocal, normalWorld,
-  cameraPosition, time,
+  cameraPosition, time, texture,
 } from 'three/tsl';
 import { sunWarmthUniform } from '../materials/terrainMaterialNode';
-import type { TerrainSource } from '../terrain/terrainSource';
 
 export interface WaterConfig {
-  /** Water surface elevation in world units */
   waterLevel: number;
-  /** Plane extent (half-size) */
   extent: number;
-  /** Plane subdivision for wave displacement */
   segments: number;
-  /** Deep water color */
   deepColor: [number, number, number];
-  /** Shallow water color */
   shallowColor: [number, number, number];
-  /** Maximum depth for color gradient */
   maxDepth: number;
-  /** Wave amplitude */
   waveAmplitude: number;
-  /** Wave frequency */
   waveFrequency: number;
-  /** Shoreline foam width in world units */
   foamWidth: number;
 }
 
@@ -48,12 +40,12 @@ export const DEFAULT_WATER_CONFIG: WaterConfig = {
   waterLevel: 8,
   extent: 200,
   segments: 128,
-  deepColor: [0.05, 0.12, 0.22],
-  shallowColor: [0.15, 0.35, 0.30],
-  maxDepth: 15,
-  waveAmplitude: 0.15,
+  deepColor: [0.04, 0.10, 0.20],
+  shallowColor: [0.12, 0.30, 0.28],
+  maxDepth: 12,
+  waveAmplitude: 0.12,
   waveFrequency: 0.8,
-  foamWidth: 2.0,
+  foamWidth: 1.5,
 };
 
 export interface WaterSystem {
@@ -64,21 +56,21 @@ export interface WaterSystem {
 
 export function createWaterSystem(
   scene: THREE.Scene,
-  terrain: TerrainSource,
+  heightTex: THREE.DataTexture,
+  fieldExtent: number,
   config: WaterConfig = DEFAULT_WATER_CONFIG,
 ): WaterSystem {
   const waterLevelU = uniform(config.waterLevel);
+  const extentU = uniform(fieldExtent);
   const deepColorU = uniform(new THREE.Color(...config.deepColor));
   const shallowColorU = uniform(new THREE.Color(...config.shallowColor));
 
-  // Create water plane geometry
   const geo = new THREE.PlaneGeometry(
     config.extent * 2, config.extent * 2,
     config.segments, config.segments,
   );
   geo.rotateX(-Math.PI / 2);
 
-  // TSL water material
   const mat = new MeshStandardNodeMaterial();
   mat.transparent = true;
   mat.side = THREE.DoubleSide;
@@ -89,73 +81,76 @@ export function createWaterSystem(
     const lp = positionLocal.toVar();
     const wp = positionWorld;
     const t = time;
-
-    // Two overlapping sine waves for organic motion
     const wave1 = sin(wp.x.mul(config.waveFrequency).add(t.mul(1.2))).mul(
       cos(wp.z.mul(config.waveFrequency * 0.7).add(t.mul(0.9)))
     ).mul(config.waveAmplitude);
-
     const wave2 = sin(wp.x.mul(config.waveFrequency * 1.5).add(wp.z.mul(0.8)).add(t.mul(1.8)))
       .mul(config.waveAmplitude * 0.4);
-
     lp.y = lp.y.add(wave1).add(wave2);
     return lp;
   })();
 
-  // ── Color: depth-based gradient + shoreline foam + fresnel ──
+  // ── Color: terrain-depth-driven + fresnel ──
   mat.colorNode = Fn(() => {
     const wp = positionWorld;
-    const wl = waterLevelU;
 
-    // Estimate terrain depth below water
-    // Sample terrain height at this XZ position (approximate — uses world position of water surface)
-    // Since we can't call JS terrain.sampleHeight from TSL, we use Y position relative to water level
-    // as a proxy. The water mesh sits at waterLevel, so depth ≈ waterLevel - terrainHeight.
-    // For now, use a simple distance-from-shore heuristic based on noise.
-    const shoreNoise = sin(wp.x.mul(0.15)).mul(cos(wp.z.mul(0.12))).mul(0.5).add(0.5);
-    const distFromCenter = wp.xz.length().div(float(config.extent));
-    const pseudoDepth = clamp(distFromCenter.mul(config.maxDepth).add(shoreNoise.mul(3)), float(0), float(config.maxDepth));
+    // Sample terrain height at this XZ position from height texture
+    const fieldUV = wp.xz.div(extentU.mul(2)).add(0.5);
+    const terrainH = texture(heightTex, fieldUV).r;
+
+    // Real depth below water surface
+    const depth = clamp(waterLevelU.sub(terrainH), float(0), float(config.maxDepth));
 
     // Depth color gradient
-    const depthT = smoothstep(float(0), float(config.maxDepth), pseudoDepth);
+    const depthT = smoothstep(float(0), float(config.maxDepth), depth);
     const waterColor = mix(vec3(shallowColorU), vec3(deepColorU), depthT);
 
-    // Fresnel: more reflective at grazing angles
+    // Shoreline foam: bright edge where depth is very small
+    const foamT = smoothstep(float(config.foamWidth), float(0), depth);
+    const foamColor = vec3(0.85, 0.88, 0.82);
+    const withFoam = mix(waterColor, foamColor, foamT.mul(0.6));
+
+    // Fresnel reflection
     const viewDir = normalize(cameraPosition.sub(wp));
     const fresnel = pow(float(1).sub(max(dot(vec3(0, 1, 0), viewDir), float(0))), float(3));
-
-    // Sky reflection color (matches atmosphere)
     const skyReflect = mix(vec3(0.6, 0.7, 0.85), vec3(0.75, 0.72, 0.65), sunWarmthUniform);
 
-    // Blend water color with sky reflection by fresnel
-    return mix(waterColor, skyReflect, fresnel.mul(0.5));
+    return mix(withFoam, skyReflect, fresnel.mul(0.45));
   })();
 
-  // ── Opacity: fade at edges, more opaque at depth ──
+  // ── Opacity: hide where terrain is above water, fade at edges ──
   mat.opacityNode = Fn(() => {
     const wp = positionWorld;
-    const distFromCenter = wp.xz.length().div(float(config.extent));
 
-    // Fade out at extent edges
-    const edgeFade = smoothstep(float(0.95), float(0.85), distFromCenter);
+    // Sample terrain height
+    const fieldUV = wp.xz.div(extentU.mul(2)).add(0.5);
+    const terrainH = texture(heightTex, fieldUV).r;
 
-    // Base opacity (deeper = more opaque)
-    const depthOpacity = smoothstep(float(0), float(8), distFromCenter.mul(config.maxDepth)).mul(0.5).add(0.35);
+    // Depth below water
+    const depth = waterLevelU.sub(terrainH);
 
-    return depthOpacity.mul(edgeFade);
+    // Fully transparent where terrain is above water
+    const underwaterMask = smoothstep(float(0), float(0.5), depth);
+
+    // Edge fade at extent boundary
+    const distFromCenter = wp.xz.length().div(extentU);
+    const edgeFade = smoothstep(float(1.0), float(0.9), distFromCenter);
+
+    // Opacity: more opaque in deeper water
+    const depthOpacity = smoothstep(float(0), float(5), depth).mul(0.6).add(0.25);
+
+    return depthOpacity.mul(underwaterMask).mul(edgeFade);
   })();
 
-  // ── Roughness: slightly glossy water ──
-  mat.roughnessNode = float(0.15);
+  mat.roughnessNode = float(0.1);
   mat.metalnessNode = float(0.0);
 
-  // Create mesh
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.y = config.waterLevel;
   mesh.receiveShadow = true;
   (scene as any).add(mesh);
 
-  console.log(`[water] created at level ${config.waterLevel}, extent ±${config.extent}`);
+  console.log(`[water] terrain-depth water at level ${config.waterLevel}`);
 
   return {
     mesh,
