@@ -51,6 +51,7 @@ export function applyChannelGeometry(
   w: number, h: number,
   cellSize: number,
   params: ChannelGeometryParams = DEFAULT_CHANNEL_PARAMS,
+  resistance?: Float32Array,
 ): void {
   const n = w * h;
 
@@ -62,12 +63,15 @@ export function applyChannelGeometry(
   // Compute channel properties from drainage area
   for (let i = 0; i < n; i++) {
     const a = area[i];
-    if (a < params.minArea) continue;
+    // On resistant rock, require higher drainage area to initiate channels
+    const R = resistance ? resistance[i] : 1.0;
+    const effectiveMinArea = params.minArea / Math.max(0.1, R);
+    if (a < effectiveMinArea) continue;
 
-    // Hydraulic geometry scaling
-    const effectiveArea = a - params.minArea;
-    const widthWorld = params.widthCoeff * Math.pow(effectiveArea, params.widthExponent);
-    const depth = params.depthCoeff * Math.pow(effectiveArea, params.depthExponent);
+    // Hydraulic geometry scaling (reduced on resistant rock)
+    const effectiveArea = a - effectiveMinArea;
+    const widthWorld = params.widthCoeff * Math.pow(effectiveArea, params.widthExponent) * Math.sqrt(R);
+    const depth = params.depthCoeff * Math.pow(effectiveArea, params.depthExponent) * R;
 
     const halfWidthCells = Math.min(params.maxHalfWidth, widthWorld / cellSize);
 

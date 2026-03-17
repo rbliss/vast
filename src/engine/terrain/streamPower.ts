@@ -464,10 +464,41 @@ export function streamPowerErosion(
         const A = area[idx];
         const S = Math.max(slopes[idx], minSlope);
 
-        // E = K * R * A^m * S^n, where R = resistance (0-1 erodibility)
+        // Resistance from dynamic strata
         const R = resistance ? resistance[idx] : 1.0;
+
+        // Mesa-top protection: on resistant + flat cells, require much larger
+        // drainage area before channel incision begins (suppresses summit spires)
+        let effectiveA = A;
+        if (R < 0.4 && S < 0.3) {
+          // This is a resistant flat surface — mesa top / tableland
+          // Raise the effective channel-initiation threshold
+          const tablelandFactor = (0.4 - R) / 0.4; // 0-1, stronger for harder rock
+          const flatFactor = (0.3 - S) / 0.3;      // 0-1, stronger for flatter terrain
+          const protection = tablelandFactor * flatFactor;
+          // Reduce effective drainage area → less erosion on mesa top
+          effectiveA = A * (1 - protection * 0.85);
+        }
+
+        // Rim amplification: where slope transitions from flat to steep (rim edge),
+        // slightly amplify erosion to create retreat behavior
+        let rimBoost = 1.0;
+        if (resistance) {
+          // Check if this cell is at a resistance boundary near a steep edge
+          const slopeUp = slopes[idx - w] ?? 0;
+          const slopeDown = slopes[idx + w] ?? 0;
+          const slopeL = slopes[idx - 1] ?? 0;
+          const slopeR = slopes[idx + 1] ?? 0;
+          const maxNeighborSlope = Math.max(slopeUp, slopeDown, slopeL, slopeR);
+          // If we're relatively flat but adjacent to steep terrain → rim edge
+          if (S < 0.5 && maxNeighborSlope > 1.0 && R < 0.5) {
+            rimBoost = 1.0 + (maxNeighborSlope - 1.0) * 0.3;
+          }
+        }
+
+        // E = K * R * A^m * S^n
         const erosion = Math.min(
-          erosionK * R * Math.pow(A, areaExponent) * Math.pow(S, slopeExponent),
+          erosionK * R * rimBoost * Math.pow(effectiveA, areaExponent) * Math.pow(S, slopeExponent),
           maxErosion,
         );
         const eroded = dt * erosion;

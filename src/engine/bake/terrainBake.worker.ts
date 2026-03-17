@@ -69,9 +69,10 @@ function executeBakeInWorker(request: TerrainBakeRequest): TerrainBakeArtifacts 
     tStreamPower = performance.now() - t;
   }
 
-  // Stage 2b: Channel geometry
+  // Stage 2b: Channel geometry (resistance-aware)
   if (spResult) {
-    applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize);
+    const chanResistance = generateResistanceGrid(grid, n, n, extent, cellSize);
+    applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize, undefined, chanResistance);
   }
 
   // Stage 2c: Hillslope transport (resistance-aware)

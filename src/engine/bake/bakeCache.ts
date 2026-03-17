@@ -11,7 +11,7 @@
 import type { TerrainBakeRequest, TerrainBakeArtifacts, TerrainBakeMetadata } from './types';
 
 // ── Cache version: bump to invalidate all cached bakes ──
-const CACHE_VERSION = 'v6-dynamic-resistance';
+const CACHE_VERSION = 'v7-mesa-preserve';
 
 // ── Cache key generation ──
 

@@ -60,10 +60,11 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
     console.log(`[bake] stream-power: ${erosion.streamPower.iterations} iterations (${tStreamPower.toFixed(0)}ms)`);
   }
 
-  // ── Stage 2b: Channel geometry shaping ──
+  // ── Stage 2b: Channel geometry shaping (resistance-aware) ──
   if (spResult) {
+    const postChannelResistance = resistanceGen(grid);
     const tChan0 = performance.now();
-    applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize);
+    applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize, undefined, postChannelResistance);
     console.log(`[bake] channel geometry (${(performance.now() - tChan0).toFixed(0)}ms)`);
   }
 
