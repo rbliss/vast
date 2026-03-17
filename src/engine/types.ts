@@ -86,6 +86,16 @@ export interface ScreenshotUploadResponse {
   size: number;
 }
 
+/** Snapshot API response shape. */
+export interface SnapshotUploadResponse {
+  ok: boolean;
+  id: string;
+  filename: string;
+  path: string;
+  metadataPath: string;
+  size: number;
+}
+
 /** Typed DOM element lookup — throws if missing. */
 export function mustEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);

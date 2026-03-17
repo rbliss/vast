@@ -11,7 +11,10 @@ export default defineConfig({
     host: '0.0.0.0',
     allowedHosts: ['beyond-all-reason'],
     proxy: {
-      '/api': 'http://127.0.0.1:8081',
+      '/api': {
+        target: 'http://127.0.0.1:8081',
+        timeout: 60000,
+      },
       '/verification': 'http://127.0.0.1:8081',
     },
   },

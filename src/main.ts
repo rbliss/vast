@@ -4,6 +4,8 @@
  */
 
 import './styles.css';
+// Initialize error buffer early — must be before any app code that may throw
+import './utils/runtimeErrors';
 
 import { TerrainApp } from './engine/TerrainApp';
 import { mustEl } from './engine/types';
@@ -55,6 +57,7 @@ createScreenshotUi(
     camera: app.camera,
     getLabel: () => `terrain_${app.centerCX}_${app.centerCZ}`,
     captureFrame: () => app.captureFrame(),
+    getSnapshotState: () => app.getSnapshotState(),
   },
 );
 

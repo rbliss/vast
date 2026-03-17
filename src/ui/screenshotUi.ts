@@ -1,10 +1,13 @@
 /**
- * Screenshot button: capture, upload, clipboard.
+ * Snapshot UI: capture frame + metadata, upload, clipboard.
+ * Backwards-compatible — still captures via the same frame path,
+ * but now also gathers engine state and runtime errors.
  */
 
 import * as THREE from 'three';
 import type { WebGLRenderer, Scene, PerspectiveCamera } from 'three';
-import type { ScreenshotUploadResponse } from '../engine/types';
+import type { ScreenshotUploadResponse, SnapshotUploadResponse } from '../engine/types';
+import { getRecentErrors } from '../utils/runtimeErrors';
 
 interface ScreenshotOpts {
   renderer: WebGLRenderer;
@@ -13,12 +16,14 @@ interface ScreenshotOpts {
   getLabel: () => string;
   /** Optional facade capture — if provided, skips WebGL render target path */
   captureFrame?: () => string;
+  /** Engine snapshot state provider */
+  getSnapshotState?: () => Record<string, unknown>;
 }
 
 export function createScreenshotUi(
   btnEl: HTMLButtonElement,
   statusEl: HTMLElement,
-  { renderer, scene, camera, getLabel, captureFrame }: ScreenshotOpts,
+  { renderer, scene, camera, getLabel, captureFrame, getSnapshotState }: ScreenshotOpts,
 ) {
   let busy = false;
 
@@ -75,24 +80,31 @@ export function createScreenshotUi(
     btnEl.disabled = true;
     setStatus('Capturing...');
     try {
-      // Use facade capture if available (works for both WebGL and WebGPU)
+      // Capture frame image
       const image = captureFrame ? captureFrame() : (() => {
         renderer.render(scene, camera);
         return captureToDataURL();
       })();
       const label = getLabel();
-      const resp = await fetch('/api/screenshot', {
+
+      // Gather snapshot metadata
+      const metadata: Record<string, unknown> = getSnapshotState ? getSnapshotState() : {};
+      metadata.consoleErrors = getRecentErrors();
+
+      // Try the snapshot endpoint first
+      const resp = await fetch('/api/snapshot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image, label, format: 'png' }),
+        body: JSON.stringify({ image, label, format: 'png', metadata }),
       });
       if (!resp.ok) throw new Error(`upload ${resp.status}`);
-      const result: ScreenshotUploadResponse = await resp.json();
-      const copied = await copyToClipboard(result.filename);
-      const url = new URL(result.path, location.href).href;
-      setStatus(`${result.filename}${copied ? ' (copied)' : ''} — ${url}`);
+      const result: SnapshotUploadResponse = await resp.json();
+      const copied = await copyToClipboard(result.id);
+      const imgUrl = new URL(result.path, location.href).href;
+      const metaUrl = new URL(result.metadataPath, location.href).href;
+      setStatus(`${result.id}${copied ? ' (copied)' : ''}\n${imgUrl}\n${metaUrl}`);
     } catch (err: unknown) {
-      console.error('[screenshot]', err);
+      console.error('[snapshot]', err);
       setStatus(`Failed: ${err instanceof Error ? err.message : err}`, true);
     } finally {
       busy = false;

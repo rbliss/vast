@@ -211,4 +211,62 @@ export class TerrainApp {
     this.updateChunks();
     return this._backend.captureFrame(this.renderer, this.scene, this.camera);
   }
+
+  /**
+   * Snapshot state — returns a plain JSON-safe object describing the
+   * current engine/app runtime state. This is the "game state" for
+   * the terrain playground (no formal gameplay yet).
+   */
+  getSnapshotState(): Record<string, unknown> {
+    const cam = this.camera;
+    const tgt = this.controls.target;
+
+    // Direction from camera to target
+    const dir = tgt.clone().sub(cam.position).normalize();
+
+    // Yaw: angle of XZ direction from +Z axis (degrees)
+    const yawRad = Math.atan2(dir.x, dir.z);
+    const yawDeg = yawRad * (180 / Math.PI);
+
+    // Pitch: angle above/below horizon (degrees)
+    const pitchRad = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+    const pitchDeg = pitchRad * (180 / Math.PI);
+
+    // Orbit distance
+    const distance = cam.position.distanceTo(tgt);
+
+    return {
+      timestamp: new Date().toISOString(),
+      camera: {
+        position: { x: cam.position.x, y: cam.position.y, z: cam.position.z },
+        target: { x: tgt.x, y: tgt.y, z: tgt.z },
+        direction: { x: dir.x, y: dir.y, z: dir.z },
+        yawDeg: Math.round(yawDeg * 100) / 100,
+        pitchDeg: Math.round(pitchDeg * 100) / 100,
+        distance: Math.round(distance * 100) / 100,
+        fov: cam.fov,
+      },
+      terrain: {
+        centerCell: { x: this.centerCX, z: this.centerCZ },
+        slotCount: this.slots.length,
+      },
+      app: {
+        rendererMode: this.rendererMode,
+        reversedDepthSupported: this.reversedDepthSupported,
+        iblEnabled: this._iblEnabled,
+        dpr: { mode: this.dpr.ctrl.mode, current: this.dpr.ctrl.current },
+        debug: this.debug,
+        url: location.href,
+        query: Object.fromEntries(new URLSearchParams(location.search)),
+      },
+      // Current runtime state — "game state" for the terrain playground
+      gameState: {
+        description: 'Terrain playground runtime snapshot — no formal gameplay state yet',
+        rendererMode: this.rendererMode,
+        iblEnabled: this._iblEnabled,
+        dpr: this.dpr.ctrl.current,
+        centerCell: { x: this.centerCX, z: this.centerCZ },
+      },
+    };
+  }
 }
