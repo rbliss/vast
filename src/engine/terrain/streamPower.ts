@@ -76,43 +76,103 @@ const D8_DIST = [
 ];
 
 /**
- * Compute D8 flow accumulation (drainage area) over the grid.
- * Returns drainage area at each cell (minimum 1.0 = self).
+ * D-infinity flow accumulation (Tarboton 1997 inspired).
  *
- * Also returns the flow receiver index for each cell (-1 = no outflow / pit).
+ * For each cell, finds the steepest descent direction as a continuous
+ * angle, then distributes flow proportionally to the two D8 neighbors
+ * that bracket that angle. This produces smoother, less grid-biased
+ * drainage patterns than pure D8.
+ *
+ * Also computes a D8 "primary receiver" for use by transport/deposition
+ * (which still needs a single downstream target).
  */
+
+// 8 facet triangles for D-inf: each defined by two adjacent D8 neighbors
+// Facet i uses neighbors at D8 indices FACET_N1[i] and FACET_N2[i]
+// Ordered counterclockwise starting from +X direction
+const FACET_N1 = [4, 2, 1, 0, 3, 5, 6, 7]; // first neighbor of each facet
+const FACET_N2 = [2, 1, 0, 3, 5, 6, 7, 4]; // second neighbor of each facet
+
 function computeFlowAccumulation(
   grid: Float32Array, w: number, h: number, cellSize: number,
 ): { area: Float32Array; receiver: Int32Array } {
   const n = w * h;
   const area = new Float32Array(n);
-  area.fill(1.0); // Each cell contributes 1 unit
+  area.fill(1.0);
 
   const receiver = new Int32Array(n);
   receiver.fill(-1);
 
-  // Compute receiver for each cell (steepest downhill neighbor)
-  for (let z = 0; z < h; z++) {
-    for (let x = 0; x < w; x++) {
+  // Per-cell flow fractions to two receivers (D-inf proportional split)
+  const recv1 = new Int32Array(n);
+  const recv2 = new Int32Array(n);
+  const frac1 = new Float32Array(n); // fraction to recv1
+  recv1.fill(-1);
+  recv2.fill(-1);
+
+  for (let z = 1; z < h - 1; z++) {
+    for (let x = 1; x < w - 1; x++) {
       const idx = z * w + x;
       const hc = grid[idx];
-      let bestSlope = 0;
-      let bestIdx = -1;
 
-      for (let d = 0; d < 8; d++) {
-        const nx = x + D8_DX[d];
-        const nz = z + D8_DZ[d];
-        if (nx < 0 || nx >= w || nz < 0 || nz >= h) continue;
+      // Find steepest facet slope among 8 triangular facets
+      let bestFacetSlope = 0;
+      let bestN1 = -1;
+      let bestN2 = -1;
+      let bestFrac = 1.0; // fraction going to n1 (1-frac goes to n2)
+      let bestD8 = -1;
+      let bestD8Slope = 0;
 
-        const nIdx = nz * w + nx;
-        const drop = (hc - grid[nIdx]) / (D8_DIST[d] * cellSize);
-        if (drop > bestSlope) {
-          bestSlope = drop;
-          bestIdx = nIdx;
+      for (let f = 0; f < 8; f++) {
+        const d1 = FACET_N1[f];
+        const d2 = FACET_N2[f];
+
+        const nx1 = x + D8_DX[d1], nz1 = z + D8_DZ[d1];
+        const nx2 = x + D8_DX[d2], nz2 = z + D8_DZ[d2];
+
+        const ni1 = nz1 * w + nx1;
+        const ni2 = nz2 * w + nx2;
+
+        const drop1 = (hc - grid[ni1]) / (D8_DIST[d1] * cellSize);
+        const drop2 = (hc - grid[ni2]) / (D8_DIST[d2] * cellSize);
+
+        // Track best D8 receiver (steepest single neighbor)
+        if (drop1 > bestD8Slope) { bestD8Slope = drop1; bestD8 = ni1; }
+        if (drop2 > bestD8Slope) { bestD8Slope = drop2; bestD8 = ni2; }
+
+        // Only consider facets where at least one neighbor is downhill
+        if (drop1 <= 0 && drop2 <= 0) continue;
+
+        // Facet slope: average of the two edge slopes
+        const facetSlope = (Math.max(0, drop1) + Math.max(0, drop2)) * 0.5;
+
+        if (facetSlope > bestFacetSlope) {
+          bestFacetSlope = facetSlope;
+
+          if (drop1 > 0 && drop2 > 0) {
+            // Both downhill: split proportionally
+            const total = drop1 + drop2;
+            bestN1 = ni1;
+            bestN2 = ni2;
+            bestFrac = drop1 / total;
+          } else if (drop1 > 0) {
+            // Only n1 is downhill
+            bestN1 = ni1;
+            bestN2 = -1;
+            bestFrac = 1.0;
+          } else {
+            // Only n2 is downhill
+            bestN1 = ni2;
+            bestN2 = -1;
+            bestFrac = 1.0;
+          }
         }
       }
 
-      receiver[idx] = bestIdx;
+      recv1[idx] = bestN1;
+      recv2[idx] = bestN2;
+      frac1[idx] = bestFrac;
+      receiver[idx] = bestD8; // D8 primary receiver for transport/deposition
     }
   }
 
@@ -121,12 +181,19 @@ function computeFlowAccumulation(
   for (let i = 0; i < n; i++) sorted[i] = i;
   sorted.sort((a, b) => grid[b] - grid[a]);
 
-  // Accumulate: pass area from each cell to its receiver
+  // Accumulate: distribute area proportionally (D-inf)
   for (let i = 0; i < n; i++) {
     const idx = sorted[i];
-    const recv = receiver[idx];
-    if (recv >= 0) {
-      area[recv] += area[idx];
+    const a = area[idx];
+    const r1 = recv1[idx];
+    const r2 = recv2[idx];
+    const f1 = frac1[idx];
+
+    if (r1 >= 0) {
+      area[r1] += a * f1;
+    }
+    if (r2 >= 0) {
+      area[r2] += a * (1 - f1);
     }
   }
 
