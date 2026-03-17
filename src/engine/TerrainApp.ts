@@ -505,7 +505,13 @@ export class TerrainApp {
   captureFrame(): string {
     this.controls.update();
     this.updateChunks();
-    return this._backend.captureFrame(this.renderer, this.scene, this.camera);
+    // Render through presentation pipeline if active, then capture
+    if (this._presentationMode && this._presentationPipeline) {
+      this._presentationPipeline.render(this.scene, this.camera);
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
+    return this.renderer.domElement.toDataURL('image/png');
   }
 
   getSnapshotState(): Record<string, unknown> {
@@ -539,6 +545,10 @@ export class TerrainApp {
         renderer: 'webgpu',
         reversedDepthSupported: this.reversedDepthSupported,
         iblEnabled: this._iblEnabled,
+        presentationMode: this._presentationMode,
+        exposure: this._exposure,
+        sunAzimuth: this._sunAzimuth,
+        sunElevation: this._sunElevation,
         dpr: { mode: this.dpr.ctrl.mode, current: this.dpr.ctrl.current },
         debug: this.debug,
         url: location.href,
