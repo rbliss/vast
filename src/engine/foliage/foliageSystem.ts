@@ -13,10 +13,12 @@
 
 import * as THREE from 'three';
 import type { Scene } from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CHUNK_SIZE, GRASS_PER_CHUNK, ROCK_PER_CHUNK, SHRUB_PER_CHUNK } from '../config';
 import type { TerrainSource } from '../terrain/terrainSource';
 import type { FieldTextures } from '../terrain/fieldTextures';
 import type { FoliagePayload, FoliageSystem } from '../types';
+import { makeRockVariants } from './rockGeometry';
 
 function placeHash(x: number, y: number): number {
   let h = x * 374761393 + y * 668265263;
@@ -24,52 +26,74 @@ function placeHash(x: number, y: number): number {
   return ((h ^ (h >> 16)) >>> 0) / 4294967296;
 }
 
-// ── Grass clump geometry: 2 crossed quads ──
+// ── Grass clump geometry: 3 crossed quads for fuller appearance ──
 function makeGrassGeo() {
   const g = new THREE.BufferGeometry();
-  const hw = 0.3, hh = 0.5;
+  const hw = 0.25, hh = 0.55;
   const verts = new Float32Array([
+    // Quad 1
     -hw,0,0, hw,0,0, hw,hh,0, -hw,hh,0,
-    0,0,-hw, 0,0,hw, 0,hh,hw, 0,hh,-hw,
+    // Quad 2 (rotated 60°)
+    -hw*0.5,0,-hw*0.866, hw*0.5,0,hw*0.866, hw*0.5,hh,hw*0.866, -hw*0.5,hh,-hw*0.866,
+    // Quad 3 (rotated 120°)
+    -hw*0.5,0,hw*0.866, hw*0.5,0,-hw*0.866, hw*0.5,hh,-hw*0.866, -hw*0.5,hh,hw*0.866,
   ]);
-  const idx = [0,1,2, 0,2,3, 4,5,6, 4,6,7];
+  const idx = [0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11];
   g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
 }
 
-// ── Rock geometry: squashed icosahedron ──
-function makeRockGeo() {
-  const g = new THREE.IcosahedronGeometry(0.3, 0);
-  const pos = g.getAttribute('position');
-  for (let i = 0; i < pos.count; i++) {
-    pos.setY(i, pos.getY(i) * 0.5);
-  }
-  pos.needsUpdate = true;
-  g.computeVertexNormals();
-  return g;
-}
-
-// ── Shrub geometry: small sphere-ish cluster ──
+// ── Shrub geometry: cluster of small spheres ──
 function makeShrubGeo() {
+  // Multi-sphere cluster for fuller shrub look
+  const spheres: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 3; i++) {
+    const angle = (i / 3) * Math.PI * 2;
+    const r = 0.12 + i * 0.02;
+    const sphere = new THREE.IcosahedronGeometry(r, 1);
+    const pos = sphere.getAttribute('position');
+    const ox = Math.cos(angle) * 0.06;
+    const oz = Math.sin(angle) * 0.06;
+    for (let j = 0; j < pos.count; j++) {
+      pos.setXYZ(j, pos.getX(j) + ox, pos.getY(j) + i * 0.04, pos.getZ(j) + oz);
+    }
+    spheres.push(sphere);
+  }
+  const merged = mergeGeometries(spheres);
+  if (merged) {
+    merged.computeVertexNormals();
+    return merged;
+  }
   return new THREE.IcosahedronGeometry(0.25, 1);
 }
 
 export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageSystem {
   const grassGeo = makeGrassGeo();
-  const rockGeo  = makeRockGeo();
+  const rockVariants = makeRockVariants(4);
   const shrubGeo = makeShrubGeo();
 
   const grassMat = new THREE.MeshLambertMaterial({ color: 0x4a7a2e, side: THREE.DoubleSide });
-  const rockMat  = new THREE.MeshStandardMaterial({ color: 0x8a8a7a, roughness: 0.9, envMapIntensity: envIntensity });
+  // Varied rock materials for visual variety
+  const rockMats = [
+    new THREE.MeshStandardMaterial({ color: 0x7a7a6e, roughness: 0.92, envMapIntensity: envIntensity }),
+    new THREE.MeshStandardMaterial({ color: 0x8a8878, roughness: 0.88, envMapIntensity: envIntensity }),
+    new THREE.MeshStandardMaterial({ color: 0x6e6e64, roughness: 0.95, envMapIntensity: envIntensity }),
+    new THREE.MeshStandardMaterial({ color: 0x9a9082, roughness: 0.85, envMapIntensity: envIntensity }),
+  ];
   const shrubMat = new THREE.MeshLambertMaterial({ color: 0x3d6b2e });
 
   const _dummy = new THREE.Object3D();
 
+  let rockVariantIdx = 0;
+
   function createInstances(): FoliagePayload {
+    // Cycle through rock variants for per-chunk variety
+    const vi = rockVariantIdx % rockVariants.length;
+    rockVariantIdx++;
     const grass = new THREE.InstancedMesh(grassGeo, grassMat, GRASS_PER_CHUNK);
-    const rock  = new THREE.InstancedMesh(rockGeo, rockMat, ROCK_PER_CHUNK);
+    const rock  = new THREE.InstancedMesh(rockVariants[vi], rockMats[vi], ROCK_PER_CHUNK);
     const shrub = new THREE.InstancedMesh(shrubGeo, shrubMat, SHRUB_PER_CHUNK);
     grass.frustumCulled = false;
     rock.frustumCulled = false;
