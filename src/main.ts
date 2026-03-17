@@ -44,7 +44,16 @@ if (dprParam === 'auto') {
   if (v >= 1.0 && v <= Math.min(window.devicePixelRatio, 2)) dprInitial = v;
 }
 
+// ── Startup status overlay (must init before autosave check) ──
+const startupEl = document.getElementById('startup-status');
+const startupT0 = performance.now();
+
+function setStartupStatus(msg: string) {
+  if (startupEl) startupEl.textContent = msg;
+}
+
 // ── Create or restore world document ──
+setStartupStatus('Checking for saved draft...');
 let worldDoc: WorldDocument;
 const savedDraft = await loadAutosave();
 if (savedDraft && !params.has('preset')) {
@@ -76,14 +85,6 @@ if (sunElUrl) worldDoc.scene.sun.elevation = parseFloat(sunElUrl);
 if (params.has('present')) worldDoc.scene.presentation = true;
 if (params.get('ibl') === 'off') worldDoc.scene.ibl = false;
 if (params.get('clay') !== null) { /* clay is viewport-only, not document state */ }
-
-// ── Startup status overlay ──
-const startupEl = document.getElementById('startup-status');
-const startupT0 = performance.now();
-
-function setStartupStatus(msg: string) {
-  if (startupEl) startupEl.textContent = msg;
-}
 
 setStartupStatus('Checking cache...');
 
@@ -329,10 +330,9 @@ shell.addEventListener('save-project', (async () => {
 }) as EventListener);
 
 shell.addEventListener('open-project', (async () => {
-  let doc: WorldDocument | null = null;
-  try {
-    doc = await openDocument();
-  } catch {
+  // Try File System Access first, fall back to JSON import
+  let doc = await openDocument();
+  if (!doc) {
     doc = await importDocumentJSON();
   }
   if (!doc) return;
@@ -349,11 +349,15 @@ shell.addEventListener('open-project', (async () => {
   app.setCloudCoverage(worldDoc.scene.cloudCoverage);
   app.setWaterLevel(worldDoc.scene.waterLevel);
   app.setIblEnabled(worldDoc.scene.ibl);
+  if (worldDoc.scene.presentation !== app.isPresentationMode()) {
+    await app.setPresentationMode(worldDoc.scene.presentation);
+  }
   viewportStore.setSunDirection(worldDoc.scene.sun.azimuth, worldDoc.scene.sun.elevation);
   viewportStore.setExposure(worldDoc.scene.exposure);
   viewportStore.setCloudCoverage(worldDoc.scene.cloudCoverage);
   viewportStore.setWaterLevel(worldDoc.scene.waterLevel);
   viewportStore.setIblEnabled(worldDoc.scene.ibl);
+  viewportStore.setPresentationMode(worldDoc.scene.presentation);
 
   // Update inspector
   const insp = document.getElementById('inspector') as any;
