@@ -395,7 +395,8 @@ if (!worldDoc.scene.ibl) app.setIblEnabled(false);
 if (worldDoc.scene.presentation) {
   app.setPresentationMode(true).then(syncToolbar);
 }
-if (params.get('clay') !== null) {
+// Clay mode on by default (use ?textured to disable)
+if (!params.has('textured')) {
   app.setClayMode(true);
   viewportStore.setClayMode(true);
 }
