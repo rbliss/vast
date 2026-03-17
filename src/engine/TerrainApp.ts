@@ -1,6 +1,7 @@
 /**
  * TerrainApp: top-level engine facade.
  * Framework-agnostic — no DOM creation, no UI knowledge.
+ * Uses a RendererBackend to abstract WebGL vs WebGPU differences.
  */
 
 import * as THREE from 'three';
@@ -8,11 +9,9 @@ import type { WebGLRenderer, Scene, PerspectiveCamera, MeshStandardMaterial } fr
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, TextureSet } from './types';
 import type { DprController } from './controls/dprController';
+import type { RendererBackend, RendererMode } from './backend/types';
 
-import { createRenderer, type RendererMode, type RendererResult } from './core/renderer';
-import { createScene, createCamera, createLighting } from './core/renderer';
-import { createWebGPURenderer, createWebGPUScene, createWebGPUCamera, createWebGPULighting } from './core/rendererWebGPU';
-import { createEnvironment } from './core/environment';
+import { getBackend } from './backend';
 import { createOrbitMovement } from './controls/orbitMovement';
 import { createDprController } from './controls/dprController';
 import { loadTextureSet } from './materials/textureSet';
@@ -40,57 +39,48 @@ export class TerrainApp {
   centerCX: number;
   centerCZ: number;
 
+  private _backend: RendererBackend;
   private _applyMovement: (dt: number) => void;
   private _prevTime: number;
   private _iblEnabled: boolean;
   private _hemiLight: THREE.HemisphereLight;
   private _envMap: THREE.Texture;
 
-  /** Async factory for WebGPU mode. Falls back to WebGL if unavailable. */
+  /** Async factory — resolves backend, then constructs synchronously. */
   static async createAsync(container: HTMLElement, opts: TerrainAppOptions = {}): Promise<TerrainApp> {
-    if (opts.rendererMode === 'webgpu') {
-      try {
-        const result = await createWebGPURenderer();
-        return new TerrainApp(container, opts, result);
-      } catch (err) {
-        console.warn('[terrain] WebGPU failed, falling back to WebGL:', err);
-        return new TerrainApp(container, opts);
-      }
-    }
-    return new TerrainApp(container, opts);
+    const backend = await getBackend(opts.rendererMode || 'webgl');
+    const { renderer, reversedDepthSupported } = await backend.createRenderer({
+      preserveDrawingBuffer: opts.debug,
+    });
+    return new TerrainApp(container, opts, backend, renderer, reversedDepthSupported);
   }
 
-  constructor(container: HTMLElement, opts: TerrainAppOptions = {}, prebuiltRenderer?: RendererResult) {
+  private constructor(
+    container: HTMLElement,
+    opts: TerrainAppOptions,
+    backend: RendererBackend,
+    renderer: WebGLRenderer,
+    reversedDepthSupported: boolean,
+  ) {
     this.debug = opts.debug || false;
-
-    const { renderer, reversedDepthSupported, mode } = prebuiltRenderer
-      ?? createRenderer({ preserveDrawingBuffer: this.debug });
-    this.rendererMode = mode;
+    this._backend = backend;
+    this.rendererMode = backend.mode;
     this.renderer = renderer;
     this.reversedDepthSupported = reversedDepthSupported;
 
-    // Use WebGPU-specific scene/camera/lights for proper node mapping
-    let sunLight: THREE.DirectionalLight;
-    if (this.rendererMode === 'webgpu') {
-      this.scene = createWebGPUScene() as any;
-      this.camera = createWebGPUCamera(window.innerWidth / window.innerHeight) as any;
-      const lighting = createWebGPULighting(this.scene);
-      this._hemiLight = lighting.hemi as any;
-      sunLight = lighting.sun as any;
-    } else {
-      this.scene = createScene();
-      this.camera = createCamera(window.innerWidth / window.innerHeight);
-      const lighting = createLighting(this.scene);
-      this._hemiLight = lighting.hemi;
-      sunLight = lighting.sun;
-    }
+    // All scene primitives come from the backend — no renderer-specific branching here
+    this.scene = backend.createScene() as Scene;
+    this.camera = backend.createCamera(window.innerWidth / window.innerHeight) as PerspectiveCamera;
+    const lighting = backend.createLighting(this.scene);
+    this._hemiLight = lighting.hemi as THREE.HemisphereLight;
 
-    // IBL: generate PMREM (uses temp WebGL renderer if main is WebGPU)
-    const env = createEnvironment(this.renderer, this.scene, this.rendererMode === 'webgpu');
+    // IBL
+    const env = backend.createEnvironment(this.renderer, this.scene);
     this._envMap = env.environmentMap;
     this._iblEnabled = true;
-    sunLight.position.copy(env.sunDirection).multiplyScalar(50);
+    (lighting.sun as THREE.DirectionalLight).position.copy(env.sunDirection).multiplyScalar(50);
 
+    // DPR
     this.dpr = createDprController(this.renderer, {
       mode: opts.dprMode || 'fixed',
       initial: opts.dprInitial,
@@ -98,13 +88,13 @@ export class TerrainApp {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     container.appendChild(this.renderer.domElement);
 
+    // Controls
     const { controls, applyMovement } = createOrbitMovement(this.camera, this.renderer.domElement);
     this.controls = controls;
     this._applyMovement = applyMovement;
 
+    // Materials — backend-specific
     this.textures = loadTextureSet(this.renderer);
-    // WebGPU mode: simple material (no onBeforeCompile)
-    // WebGL mode: full biome/triplanar shader
     const { matDisp, matNoDisp } = this.rendererMode === 'webgpu'
       ? createNodeTerrainMaterials(this.textures)
       : createTerrainMaterials(this.textures);
@@ -117,8 +107,10 @@ export class TerrainApp {
     this.matDisp = matDisp;
     this.matNoDisp = matNoDisp;
 
+    // Foliage
     this.foliage = createFoliageSystem(this.scene, FOLIAGE_ENV_INTENSITY);
 
+    // Chunk pool
     this.slots = [];
     this.centerCX = Infinity;
     this.centerCZ = Infinity;
@@ -129,14 +121,10 @@ export class TerrainApp {
   }
 
   // ── IBL toggle ──
-  // Pre-IBL baseline: hemi=0.6, env=0
-  // IBL mode: hemi=0.5, env=TERRAIN_ENV_INTENSITY
   private static readonly HEMI_IBL_ON = 0.5;
   private static readonly HEMI_IBL_OFF = 0.6;
 
-  isIblEnabled(): boolean {
-    return this._iblEnabled;
-  }
+  isIblEnabled(): boolean { return this._iblEnabled; }
 
   setIblEnabled(enabled: boolean): void {
     this._iblEnabled = enabled;
@@ -209,16 +197,10 @@ export class TerrainApp {
     this.renderer.setSize(w, h);
   }
 
-  /** Renderer-agnostic frame capture. Returns PNG data URL. */
+  /** Renderer-agnostic frame capture via backend. */
   captureFrame(): string {
-    // Render a clean frame
     this.controls.update();
     this.updateChunks();
-    this.renderer.render(this.scene, this.camera);
-
-    // For both WebGL and WebGPU: canvas.toDataURL works after render
-    // WebGPU renderer preserves the framebuffer for one frame after render
-    const canvas = this.renderer.domElement;
-    return canvas.toDataURL('image/png');
+    return this._backend.captureFrame(this.renderer, this.scene, this.camera);
   }
 }
