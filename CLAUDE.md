@@ -1,23 +1,46 @@
 # CLAUDE.md
 
 ## Project
-Procedural terrain playground — infinite streaming terrain rendered in the browser with Three.js WebGPU.
+High-quality procedural terrain generation running purely in the browser with Three.js WebGPU.
 
 ## Architecture
 - **Renderer:** WebGPU only (Three.js r183, TSL/NodeMaterial)
-- **Materials:** `MeshStandardNodeMaterial` with TSL shaders (`three/tsl`)
-- **Terrain:** Infinite streaming via fixed chunk pool (81 slots, 9x9 grid) with angle-aware LOD coverage
-- **Heightfield:** 4-layer model (base + mountain range + secondary peaks + relief) — silhouette-safe
-- **Biome blending:** Rock (tri-planar), grass (planar XZ), dirt (planar XZ) with per-biome normals
-- **Environment:** Precomputed static sky cube map (no runtime WebGL)
+- **Terrain:** Composable macro field system + stream-power erosion + fan deposition
+- **Materials:** Field-driven TSL materials (slope/altitude/curvature/deposition blending)
+- **Scatter:** Field-aware foliage placement (altitude/slope/deposition-driven)
+- **Atmosphere:** Per-material aerial perspective + procedural cloud dome
+- **Water:** Terrain-depth-driven water bodies with shoreline foam
+- **Post-processing:** RenderPipeline with bloom (presentation mode)
+- **Chunk streaming:** 81-slot pool (9x9 grid) with angle-aware LOD coverage
+
+## Visual quality stack (Phases A-E)
+- **A — Shape:** Macro landform primitives + stream-power erosion + fan/debris deposition
+- **B — Materials:** Field texture (slope/alt/curvature/deposition) drives 5-zone blending (snow/rock/grass/dirt/sediment)
+- **C — Scatter:** Altitude/deposition-aware rocks/grass/shrubs with procedural rock variants
+- **D — Atmosphere:** Aerial perspective + sun controls + water bodies + cloud layer
+- **E — Capture:** RenderPipeline + bloom + exposure controls + async presentation snapshots
 
 ## Key directories
-- `src/engine/` — core engine (TerrainApp facade, backend, materials, terrain, foliage, controls)
+- `src/engine/terrain/` — terrain source, macro fields, erosion, stream-power, fan deposition, field textures
+- `src/engine/materials/` — TSL terrain materials, feature model
+- `src/engine/foliage/` — foliage system, rock geometry
+- `src/engine/water/` — water body rendering
+- `src/engine/sky/` — procedural cloud layer
+- `src/engine/postprocess/` — presentation pipeline (bloom)
+- `src/engine/backend/` — WebGPU renderer backend
 - `src/ui/` — HUD, snapshot UI, DPR buttons
-- `src/utils/` — runtime error buffer
-- `textures/` — Polyhaven PBR textures + sky cube map (served as publicDir)
-- `verification/` — snapshot images + JSON sidecars
-- `scripts/` — asset generation tools
+- `plans/` — architecture plans and research docs
+
+## URL params
+- `?preset=chain|basin|plateau` — macro terrain preset
+- `?clay` — clay/shape debug mode (no textures, no foliage, no fog)
+- `?water=8` — water level in world units
+- `?present` — presentation mode (bloom + post-processing)
+- `?exposure=1.2` — tone mapping exposure
+- `?sunaz=210&sunel=35` — sun azimuth/elevation
+- `?debug` — enable debug access (`window.__app`)
+- `?ibl=off` — disable image-based lighting
+- `?dpr=auto|1|1.5|2` — device pixel ratio
 
 ## Commands
 - `npm run dev` — Vite dev server (port 8080, HTTPS)
