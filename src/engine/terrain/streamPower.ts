@@ -1,0 +1,228 @@
+/**
+ * Stream-power erosion with flow accumulation.
+ *
+ * Implements the core geomorphic erosion model:
+ *   E = K * A^m * S^n
+ * where A = upstream drainage area, S = local slope,
+ * K = erosion coefficient, m/n = exponents.
+ *
+ * This produces hierarchical drainage: larger catchments erode
+ * faster, creating branching channel networks that converge
+ * downstream — unlike droplet erosion which carves independently.
+ *
+ * Also includes hillslope diffusion for realistic slope profiles
+ * between channels (concave-up hillslopes).
+ */
+
+// ── Types ──
+
+export interface StreamPowerParams {
+  /** Number of erosion iterations (more = deeper/more developed channels) */
+  iterations: number;
+  /** Erosion coefficient K */
+  erosionK: number;
+  /** Drainage area exponent m (typically 0.4-0.5) */
+  areaExponent: number;
+  /** Slope exponent n (typically 1.0-1.3) */
+  slopeExponent: number;
+  /** Time step per iteration */
+  dt: number;
+  /** Hillslope diffusion coefficient (smooths between channels) */
+  diffusionRate: number;
+  /** Minimum slope to prevent division issues */
+  minSlope: number;
+  /** Uplift rate per iteration (counteracts erosion to maintain relief) */
+  upliftRate: number;
+  /** Maximum erosion per cell per iteration (prevents runaway incision) */
+  maxErosion: number;
+}
+
+export const DEFAULT_STREAM_POWER: StreamPowerParams = {
+  iterations: 25,
+  erosionK: 0.004,
+  areaExponent: 0.45,
+  slopeExponent: 1.0,
+  dt: 1.0,
+  diffusionRate: 0.01,
+  minSlope: 0.001,
+  upliftRate: 0.15,
+  maxErosion: 0.5,
+};
+
+// ── D8 flow direction + accumulation ──
+
+/** D8 neighbor offsets: [dx, dz] for 8 directions */
+const D8_DX = [-1, 0, 1, -1, 1, -1, 0, 1];
+const D8_DZ = [-1, -1, -1, 0, 0, 1, 1, 1];
+const D8_DIST = [
+  Math.SQRT2, 1, Math.SQRT2,
+  1, 1,
+  Math.SQRT2, 1, Math.SQRT2,
+];
+
+/**
+ * Compute D8 flow accumulation (drainage area) over the grid.
+ * Returns drainage area at each cell (minimum 1.0 = self).
+ *
+ * Also returns the flow receiver index for each cell (-1 = no outflow / pit).
+ */
+function computeFlowAccumulation(
+  grid: Float32Array, w: number, h: number, cellSize: number,
+): { area: Float32Array; receiver: Int32Array } {
+  const n = w * h;
+  const area = new Float32Array(n);
+  area.fill(1.0); // Each cell contributes 1 unit
+
+  const receiver = new Int32Array(n);
+  receiver.fill(-1);
+
+  // Compute receiver for each cell (steepest downhill neighbor)
+  for (let z = 0; z < h; z++) {
+    for (let x = 0; x < w; x++) {
+      const idx = z * w + x;
+      const hc = grid[idx];
+      let bestSlope = 0;
+      let bestIdx = -1;
+
+      for (let d = 0; d < 8; d++) {
+        const nx = x + D8_DX[d];
+        const nz = z + D8_DZ[d];
+        if (nx < 0 || nx >= w || nz < 0 || nz >= h) continue;
+
+        const nIdx = nz * w + nx;
+        const drop = (hc - grid[nIdx]) / (D8_DIST[d] * cellSize);
+        if (drop > bestSlope) {
+          bestSlope = drop;
+          bestIdx = nIdx;
+        }
+      }
+
+      receiver[idx] = bestIdx;
+    }
+  }
+
+  // Sort cells by height (descending) for topological accumulation
+  const sorted = new Uint32Array(n);
+  for (let i = 0; i < n; i++) sorted[i] = i;
+  sorted.sort((a, b) => grid[b] - grid[a]);
+
+  // Accumulate: pass area from each cell to its receiver
+  for (let i = 0; i < n; i++) {
+    const idx = sorted[i];
+    const recv = receiver[idx];
+    if (recv >= 0) {
+      area[recv] += area[idx];
+    }
+  }
+
+  return { area, receiver };
+}
+
+/**
+ * Compute local slope magnitude at each cell using central differences.
+ */
+function computeSlopes(
+  grid: Float32Array, w: number, h: number, cellSize: number,
+): Float32Array {
+  const slopes = new Float32Array(w * h);
+  const inv2cs = 1 / (2 * cellSize);
+
+  for (let z = 1; z < h - 1; z++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = z * w + x;
+      const dhdx = (grid[idx + 1] - grid[idx - 1]) * inv2cs;
+      const dhdz = (grid[idx + w] - grid[idx - w]) * inv2cs;
+      slopes[idx] = Math.sqrt(dhdx * dhdx + dhdz * dhdz);
+    }
+  }
+
+  return slopes;
+}
+
+/**
+ * Apply one pass of hillslope diffusion (linear).
+ * Smooths terrain between channels, creating concave-up slope profiles.
+ */
+function diffuse(
+  grid: Float32Array, w: number, h: number,
+  cellSize: number, rate: number,
+): void {
+  const cs2 = cellSize * cellSize;
+  const factor = rate / cs2;
+
+  // Use a temporary buffer for Jacobi-style iteration
+  const tmp = new Float32Array(grid.length);
+  tmp.set(grid);
+
+  for (let z = 1; z < h - 1; z++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = z * w + x;
+      const laplacian = grid[idx - 1] + grid[idx + 1] +
+                        grid[idx - w] + grid[idx + w] -
+                        4 * grid[idx];
+      tmp[idx] = grid[idx] + laplacian * factor;
+    }
+  }
+
+  grid.set(tmp);
+}
+
+// ── Main stream-power erosion loop ──
+
+/**
+ * Run stream-power erosion on the height grid.
+ *
+ * Each iteration:
+ *   1. Compute flow accumulation (drainage area A)
+ *   2. Compute local slopes (S)
+ *   3. Erode: h -= dt * K * A^m * S^n
+ *   4. Apply hillslope diffusion
+ *   5. Optional uplift
+ *
+ * This produces hierarchical channels because cells with larger
+ * drainage areas (more upstream catchment) erode faster.
+ */
+export function streamPowerErosion(
+  grid: Float32Array, w: number, h: number,
+  cellSize: number, params: StreamPowerParams,
+): void {
+  const { iterations, erosionK, areaExponent, slopeExponent, dt,
+          diffusionRate, minSlope, upliftRate, maxErosion } = params;
+
+  for (let iter = 0; iter < iterations; iter++) {
+    // Step 1: Flow accumulation
+    const { area } = computeFlowAccumulation(grid, w, h, cellSize);
+
+    // Step 2: Slopes
+    const slopes = computeSlopes(grid, w, h, cellSize);
+
+    // Step 3: Stream-power incision
+    for (let z = 1; z < h - 1; z++) {
+      for (let x = 1; x < w - 1; x++) {
+        const idx = z * w + x;
+        const A = area[idx];
+        const S = Math.max(slopes[idx], minSlope);
+
+        // E = K * A^m * S^n, capped to prevent runaway deep incision
+        const erosion = Math.min(
+          erosionK * Math.pow(A, areaExponent) * Math.pow(S, slopeExponent),
+          maxErosion,
+        );
+        grid[idx] -= dt * erosion;
+
+        // Uplift (optional, maintains relief)
+        grid[idx] += upliftRate;
+      }
+    }
+
+    // Step 4: Hillslope diffusion
+    if (diffusionRate > 0) {
+      diffuse(grid, w, h, cellSize, diffusionRate);
+    }
+
+    // Clamp to non-negative
+    for (let i = 0; i < grid.length; i++) {
+      if (grid[i] < 0) grid[i] = 0;
+    }
+  }
+}

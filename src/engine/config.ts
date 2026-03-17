@@ -8,7 +8,7 @@ export interface LodLevel {
 }
 
 export const CHUNK_SIZE = 40;
-export const SKIRT_DEPTH = 3.0;
+export const SKIRT_DEPTH = 12.0;
 export const SKIRT_INSET = 0.05;
 export const TEXTURE_WORLD_SIZE = 10;
 

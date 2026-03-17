@@ -3,9 +3,10 @@
  *
  * Pipeline stage that wraps a base TerrainSource:
  *   1. Samples the base source into a fixed-resolution height grid
- *   2. Runs thermal erosion (angle-of-repose relaxation)
- *   3. Runs hydraulic erosion (particle-based channel cutting)
- *   4. Samples the eroded grid via bilinear interpolation
+ *   2. Runs stream-power erosion (hierarchical channel incision)
+ *   3. Runs thermal relaxation (slope stabilization)
+ *   4. Optionally runs droplet erosion (fine detail)
+ *   5. Samples the eroded grid via bilinear interpolation
  *
  * ARCHITECTURE LIMITATION: This is a bounded preview bake, NOT a
  * general infinite-terrain erosion system. The eroded grid covers
@@ -20,29 +21,38 @@
 
 import type { TerrainSource } from './terrainSource';
 import { thermalErosion, hydraulicErosion, type ThermalParams, type HydraulicParams } from './erosion';
+import { streamPowerErosion, type StreamPowerParams, DEFAULT_STREAM_POWER } from './streamPower';
 
 export interface ErosionConfig {
   /** Grid resolution (gridSize x gridSize cells) */
   gridSize: number;
   /** World-space half-extent (grid covers -extent to +extent) */
   extent: number;
+  /** Stream-power erosion (primary channel generator) */
+  streamPower: StreamPowerParams & { enabled: boolean };
+  /** Thermal relaxation (slope stabilization, runs after stream-power) */
   thermal: ThermalParams & { enabled: boolean };
+  /** Droplet hydraulic erosion (optional fine detail, runs last) */
   hydraulic: HydraulicParams & { enabled: boolean };
 }
 
 export const DEFAULT_EROSION: ErosionConfig = {
   gridSize: 512,
   extent: 200,
+  streamPower: {
+    enabled: true,
+    ...DEFAULT_STREAM_POWER,
+  },
   thermal: {
     enabled: true,
-    iterations: 40,
+    iterations: 20,
     talusThreshold: 1.2,
     transferRate: 0.35,
   },
   hydraulic: {
-    enabled: true,
-    droplets: 80000,
-    maxLifetime: 80,
+    enabled: false, // Droplet erosion off by default — stream-power handles channels
+    droplets: 30000,
+    maxLifetime: 60,
     inertia: 0.3,
     sedimentCapacity: 6.0,
     minCapacity: 0.02,
@@ -50,12 +60,12 @@ export const DEFAULT_EROSION: ErosionConfig = {
     depositionRate: 0.2,
     evaporationRate: 0.02,
     gravity: 8.0,
-    erosionRadius: 3,
+    erosionRadius: 2,
     seed: 42,
   },
 };
 
-/** Fraction of extent used for edge blend (0.1 = outer 10% blends to base) */
+/** Fraction of extent used for edge blend (0.12 = outer 12% blends to base) */
 const EDGE_BLEND_FRACTION = 0.12;
 
 export class ErodedTerrainSource implements TerrainSource {
@@ -87,20 +97,27 @@ export class ErodedTerrainSource implements TerrainSource {
       }
     }
 
-    // Step 2: Thermal erosion
+    // Step 2: Stream-power erosion (primary — creates hierarchical channels)
+    if (config.streamPower.enabled) {
+      const spT0 = performance.now();
+      streamPowerErosion(this._grid, n, n, this._cellSize, config.streamPower);
+      console.log(`[erosion] stream-power: ${config.streamPower.iterations} iterations (${(performance.now() - spT0).toFixed(0)}ms)`);
+    }
+
+    // Step 3: Thermal relaxation (stabilize oversteepened slopes)
     if (config.thermal.enabled) {
       thermalErosion(this._grid, n, n, this._cellSize, config.thermal);
       console.log(`[erosion] thermal: ${config.thermal.iterations} iterations`);
     }
 
-    // Step 3: Hydraulic erosion
+    // Step 4: Droplet hydraulic detail (optional fine-scale)
     if (config.hydraulic.enabled) {
       hydraulicErosion(this._grid, n, n, this._cellSize, config.hydraulic);
-      console.log(`[erosion] hydraulic: ${config.hydraulic.droplets} droplets`);
+      console.log(`[erosion] hydraulic detail: ${config.hydraulic.droplets} droplets`);
     }
 
     this._computeTimeMs = performance.now() - t0;
-    console.log(`[erosion] bounded preview bake: ${this._computeTimeMs.toFixed(0)}ms (${n}x${n} grid, extent ±${config.extent})`);
+    console.log(`[erosion] bounded preview bake: ${this._computeTimeMs.toFixed(0)}ms total (${n}x${n} grid, extent ±${config.extent})`);
   }
 
   get computeTimeMs(): number { return this._computeTimeMs; }
@@ -137,7 +154,6 @@ export class ErodedTerrainSource implements TerrainSource {
     if (distFromCenter > this._blendStart) {
       const baseH = this._base.sampleHeight(x, z);
       const t = Math.min(1, (distFromCenter - this._blendStart) / (this._extent * EDGE_BLEND_FRACTION));
-      // Smoothstep blend
       const blend = t * t * (3 - 2 * t);
       return erodedH * (1 - blend) + baseH * blend;
     }
