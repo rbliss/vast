@@ -43,7 +43,7 @@ if (presetParam) {
   worldDoc.terrain.preset = presetParam;
 }
 
-const { source: terrainSource, bakeArtifacts } = await createTerrainSource(worldDoc, (progress) => {
+const { source: terrainSource, bakeArtifacts, domain: terrainDomain } = await createTerrainSource(worldDoc, (progress) => {
   console.log(`[startup] bake: ${progress.stage} (${progress.stageIndex + 1}/${progress.totalStages}, ${Math.round(progress.elapsedMs)}ms)`);
 });
 
@@ -57,7 +57,7 @@ const app = await TerrainApp.createAsync(document.body, worldDoc, terrainSource,
   dprMode,
   dprInitial,
   waterLevel,
-}, bakeArtifacts);
+}, bakeArtifacts, terrainDomain);
 
 // ── Wire UI ──
 const dprBtns = createDprButtons(mustEl('dprRow'), app.dpr);

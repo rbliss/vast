@@ -12,6 +12,7 @@ import type { RendererBackend, RendererLike } from './backend/types';
 import type { TerrainSource } from './terrain/terrainSource';
 import type { WorldDocumentV0 } from './document';
 import type { TerrainBakeArtifacts } from './bake/types';
+import type { TerrainDomainConfig } from './bake/terrainDomain';
 import { applyDebugOverlay, type OverlayMode } from './terrain/debugOverlay';
 import { generateFieldTextures, type FieldTextures } from './terrain/fieldTextures';
 import { sunWarmthUniform } from './materials/terrainMaterialNode';
@@ -81,18 +82,20 @@ export class TerrainApp {
     terrainSource: TerrainSource,
     opts: TerrainAppOptions = {},
     bakeArtifacts?: TerrainBakeArtifacts | null,
+    domain?: TerrainDomainConfig,
   ): Promise<TerrainApp> {
     const backend = await getBackend();
     const { renderer, reversedDepthSupported } = await backend.createRenderer({
       preserveDrawingBuffer: opts.debug,
     });
 
-    // Generate field textures from bake artifacts (formal metadata, no private field access)
-    const bakeExtent = bakeArtifacts?.metadata.extent ?? 200;
-    const bakeGridSize = bakeArtifacts?.metadata.gridSize ?? undefined;
+    // Generate field textures using domain config (single source of truth for extents)
+    const extent = domain?.extent ?? 200;
+    const fieldTextureSize = domain?.fieldTextureSize ?? 256;
     const depositionMap = bakeArtifacts?.depositionMap ?? null;
+    const bakeGridSize = domain?.bakeGridSize || undefined;
     const fieldTextures = generateFieldTextures(
-      terrainSource, 256, bakeExtent,
+      terrainSource, fieldTextureSize, extent,
       depositionMap, bakeGridSize,
     );
 

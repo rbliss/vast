@@ -14,6 +14,7 @@ import { MacroTerrainSource, MACRO_PRESETS } from './macroTerrain';
 import type { TerrainBakeRequest, TerrainBakeArtifacts } from '../bake/types';
 import { runBake, type BakeProgressCallback } from '../bake/terrainBakeManager';
 import { BakedTerrainSource } from '../bake/bakedTerrainSource';
+import { type TerrainDomainConfig, domainFromBakeMetadata, defaultDomain } from '../bake/terrainDomain';
 
 // ── Interface ──
 
@@ -54,8 +55,10 @@ export function buildBakeRequest(doc: WorldDocumentV0): TerrainBakeRequest | nul
 
 export interface TerrainSourceResult {
   source: TerrainSource;
-  /** Bake artifacts if erosion was used (for field textures, diagnostics) */
+  /** Bake artifacts if erosion was used */
   bakeArtifacts: TerrainBakeArtifacts | null;
+  /** Terrain domain config — single source of truth for spatial bounds */
+  domain: TerrainDomainConfig;
 }
 
 export async function createTerrainSource(
@@ -66,6 +69,7 @@ export async function createTerrainSource(
     return {
       source: new LegacyProceduralTerrainSource(doc.terrain.heightScale),
       bakeArtifacts: null,
+      domain: defaultDomain(),
     };
   }
 
@@ -76,15 +80,14 @@ export async function createTerrainSource(
     const base = new MacroTerrainSource(preset);
 
     if (preset.erosion) {
-      // Use async bake pipeline (worker if available, main-thread fallback)
       const request = buildBakeRequest(doc)!;
       const artifacts = await runBake(request, onProgress);
       const source = new BakedTerrainSource(base, artifacts);
-      return { source, bakeArtifacts: artifacts };
+      const domain = domainFromBakeMetadata(artifacts.metadata);
+      return { source, bakeArtifacts: artifacts, domain };
     }
 
-    // No erosion — use raw macro source
-    return { source: base, bakeArtifacts: null };
+    return { source: base, bakeArtifacts: null, domain: defaultDomain() };
   }
 
   throw new Error(`Unknown terrain type: ${doc.terrain.type}`);
