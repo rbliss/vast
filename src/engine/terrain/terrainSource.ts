@@ -12,7 +12,7 @@ import { terrainHeight, MACRO_HEIGHT_SCALE } from '../terrainHeight';
 import type { WorldDocumentV0 } from '../document';
 import { MacroTerrainSource, MACRO_PRESETS } from './macroTerrain';
 import type { TerrainBakeRequest, TerrainBakeArtifacts } from '../bake/types';
-import { executeBake } from '../bake/terrainBakePipeline';
+import { runBake, type BakeProgressCallback } from '../bake/terrainBakeManager';
 import { BakedTerrainSource } from '../bake/bakedTerrainSource';
 
 // ── Interface ──
@@ -58,7 +58,10 @@ export interface TerrainSourceResult {
   bakeArtifacts: TerrainBakeArtifacts | null;
 }
 
-export function createTerrainSource(doc: WorldDocumentV0): TerrainSourceResult {
+export async function createTerrainSource(
+  doc: WorldDocumentV0,
+  onProgress?: BakeProgressCallback,
+): Promise<TerrainSourceResult> {
   if (doc.terrain.type === 'legacyProcedural') {
     return {
       source: new LegacyProceduralTerrainSource(doc.terrain.heightScale),
@@ -73,9 +76,9 @@ export function createTerrainSource(doc: WorldDocumentV0): TerrainSourceResult {
     const base = new MacroTerrainSource(preset);
 
     if (preset.erosion) {
-      // Use bake pipeline
+      // Use async bake pipeline (worker if available, main-thread fallback)
       const request = buildBakeRequest(doc)!;
-      const artifacts = executeBake(request);
+      const artifacts = await runBake(request, onProgress);
       const source = new BakedTerrainSource(base, artifacts);
       return { source, bakeArtifacts: artifacts };
     }

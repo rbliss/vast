@@ -43,7 +43,9 @@ if (presetParam) {
   worldDoc.terrain.preset = presetParam;
 }
 
-const { source: terrainSource, bakeArtifacts } = createTerrainSource(worldDoc);
+const { source: terrainSource, bakeArtifacts } = await createTerrainSource(worldDoc, (progress) => {
+  console.log(`[startup] bake: ${progress.stage} (${progress.stageIndex + 1}/${progress.totalStages}, ${Math.round(progress.elapsedMs)}ms)`);
+});
 
 // Water level override
 const waterParam = params.get('water');
