@@ -13,6 +13,7 @@ import type { TerrainBakeRequest, TerrainBakeArtifacts, TerrainBakeMetadata } fr
 import { MacroTerrainSource } from '../terrain/macroTerrain';
 import { thermalErosion } from '../terrain/erosion';
 import { streamPowerErosion } from '../terrain/streamPower';
+import { applyChannelGeometry } from '../terrain/channelGeometry';
 import { applyFanDeposition } from '../terrain/fanDeposition';
 
 // ── Progress reporting ──
@@ -63,6 +64,11 @@ function executeBakeInWorker(request: TerrainBakeRequest): TerrainBakeArtifacts 
     const t = performance.now();
     spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower);
     tStreamPower = performance.now() - t;
+  }
+
+  // Stage 2b: Channel geometry
+  if (spResult) {
+    applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize);
   }
 
   // Stage 3: Fan/debris

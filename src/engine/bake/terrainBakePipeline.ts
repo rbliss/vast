@@ -9,6 +9,7 @@ import type { TerrainBakeRequest, TerrainBakeArtifacts, TerrainBakeMetadata } fr
 import { MacroTerrainSource } from '../terrain/macroTerrain';
 import { thermalErosion } from '../terrain/erosion';
 import { streamPowerErosion } from '../terrain/streamPower';
+import { applyChannelGeometry } from '../terrain/channelGeometry';
 import { applyFanDeposition } from '../terrain/fanDeposition';
 
 /**
@@ -51,6 +52,13 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
     spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower);
     tStreamPower = performance.now() - t;
     console.log(`[bake] stream-power: ${erosion.streamPower.iterations} iterations (${tStreamPower.toFixed(0)}ms)`);
+  }
+
+  // ── Stage 2b: Channel geometry shaping ──
+  if (spResult) {
+    const tChan0 = performance.now();
+    applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize);
+    console.log(`[bake] channel geometry (${(performance.now() - tChan0).toFixed(0)}ms)`);
   }
 
   // ── Stage 3: Fan/debris deposition ──
