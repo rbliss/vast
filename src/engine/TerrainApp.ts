@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import type { WebGLRenderer, Scene, PerspectiveCamera, MeshStandardMaterial } from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, TextureSet } from './types';
+import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, TextureSet, TerrainMaterials } from './types';
 import type { DprController } from './controls/dprController';
 import type { RendererBackend, RendererMode } from './backend/types';
 
@@ -16,7 +16,6 @@ import { createOrbitMovement } from './controls/orbitMovement';
 import { createDprController } from './controls/dprController';
 import { loadTextureSet } from './materials/textureSet';
 import { createTerrainMaterials } from './materials/terrainMaterial';
-import { createNodeTerrainMaterials } from './materials/terrainMaterialNode';
 import { createChunkSlot, rebuildChunkSlot } from './terrain/chunkGeometry';
 import { createFoliageSystem } from './foliage/foliageSystem';
 import { CHUNK_SIZE, LOD_NEAR, LOD_MID, LOD_FAR, GRID_RADIUS, FOLIAGE_ENV_INTENSITY } from './config';
@@ -47,13 +46,21 @@ export class TerrainApp {
   private _hemiLight: THREE.HemisphereLight;
   private _envMap: THREE.Texture;
 
-  /** Async factory — resolves backend, then constructs synchronously. */
+  /** Async factory — resolves backend + lazy material imports. */
   static async createAsync(container: HTMLElement, opts: TerrainAppOptions = {}): Promise<TerrainApp> {
     const backend = await getBackend(opts.rendererMode || 'webgl');
     const { renderer, reversedDepthSupported } = await backend.createRenderer({
       preserveDrawingBuffer: opts.debug,
     });
-    return new TerrainApp(container, opts, backend, renderer, reversedDepthSupported);
+
+    // Lazy-load WebGPU material only when needed (keeps main bundle smaller)
+    let materialFactory: ((textures: TextureSet) => TerrainMaterials) | undefined;
+    if (backend.mode === 'webgpu') {
+      const { createNodeTerrainMaterials } = await import('./materials/terrainMaterialNode');
+      materialFactory = createNodeTerrainMaterials;
+    }
+
+    return new TerrainApp(container, opts, backend, renderer, reversedDepthSupported, materialFactory);
   }
 
   private constructor(
@@ -62,6 +69,7 @@ export class TerrainApp {
     backend: RendererBackend,
     renderer: WebGLRenderer,
     reversedDepthSupported: boolean,
+    webgpuMaterialFactory?: (textures: TextureSet) => TerrainMaterials,
   ) {
     this.debug = opts.debug || false;
     this._backend = backend;
@@ -96,8 +104,8 @@ export class TerrainApp {
 
     // Materials — backend-specific
     this.textures = loadTextureSet(this.renderer);
-    const { matDisp, matNoDisp } = this.rendererMode === 'webgpu'
-      ? createNodeTerrainMaterials(this.textures)
+    const { matDisp, matNoDisp } = webgpuMaterialFactory
+      ? webgpuMaterialFactory(this.textures)
       : createTerrainMaterials(this.textures);
     if (this._envMap) {
       matDisp.envMap = this._envMap;

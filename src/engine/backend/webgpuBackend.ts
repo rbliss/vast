@@ -5,60 +5,95 @@
  * subsequent synchronous calls.
  */
 
-// @ts-nocheck — three/webgpu types not fully declared
+import type { Scene, PerspectiveCamera } from 'three';
 import type { RendererBackend, BackendRenderer, BackendLighting, BackendEnvironment } from './types';
 import { generateEnvironment } from '../core/environment';
 
-// Cached three/webgpu module — populated by createRenderer()
-let GPU: any = null;
+/**
+ * Minimal typed shape of the cached three/webgpu module.
+ * Avoids @ts-nocheck while acknowledging the module is untyped.
+ */
+interface GpuModule {
+  WebGPURenderer: new (opts: { antialias: boolean }) => {
+    toneMapping: number;
+    toneMappingExposure: number;
+    init(): Promise<void>;
+    setSize(w: number, h: number): void;
+    setPixelRatio(dpr: number): void;
+    render(scene: Scene, camera: PerspectiveCamera): void;
+    domElement: HTMLCanvasElement;
+    dispose(): void;
+    capabilities: Record<string, unknown>;
+    getRenderTarget(): unknown;
+    setRenderTarget(rt: unknown): void;
+  };
+  ACESFilmicToneMapping: number;
+  Scene: new () => Scene;
+  PerspectiveCamera: new (fov: number, aspect: number, near: number, far: number) => PerspectiveCamera;
+  Color: new (hex: number) => { r: number; g: number; b: number };
+  FogExp2: new (color: number, density: number) => unknown;
+  DirectionalLight: new (color: number, intensity: number) => { position: { set(x: number, y: number, z: number): void } };
+  HemisphereLight: new (sky: number, ground: number, intensity: number) => { intensity: number };
+}
+
+// Cached module — populated by createRenderer(), used by sync methods
+let GPU: GpuModule | null = null;
+
+function assertGpu(): GpuModule {
+  if (!GPU) throw new Error('WebGPU backend: createRenderer() must be called first');
+  return GPU;
+}
 
 export const webgpuBackend: RendererBackend = {
   mode: 'webgpu',
 
   async createRenderer(opts = {}) {
     const { default: WebGPU } = await import('three/examples/jsm/capabilities/WebGPU.js');
-    if (!WebGPU.isAvailable()) {
+    if (!(WebGPU as { isAvailable(): boolean }).isAvailable()) {
       throw new Error('WebGPU not available on this browser/origin');
     }
 
-    // Cache the module for synchronous scene/camera/lighting creation
-    GPU = await import('three/webgpu');
+    GPU = await import('three/webgpu') as unknown as GpuModule;
+    const g = GPU;
 
-    const renderer = new GPU.WebGPURenderer({ antialias: true });
-    renderer.toneMapping = GPU.ACESFilmicToneMapping;
+    const renderer = new g.WebGPURenderer({ antialias: true });
+    renderer.toneMapping = g.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
     await renderer.init();
 
     console.log('[backend:webgpu] renderer created');
-    return { renderer: renderer as any, reversedDepthSupported: false };
+    return { renderer: renderer as unknown as import('three').WebGLRenderer, reversedDepthSupported: false };
   },
 
   createScene() {
-    const scene = new GPU.Scene();
-    scene.background = new GPU.Color(0x87ceeb);
-    scene.fog = new GPU.FogExp2(0x87ceeb, 0.005);
+    const g = assertGpu();
+    const scene = new g.Scene() as unknown as Scene;
+    (scene as any).background = new g.Color(0x87ceeb);
+    (scene as any).fog = new g.FogExp2(0x87ceeb, 0.005);
     return scene;
   },
 
   createCamera(aspect: number) {
-    const camera = new GPU.PerspectiveCamera(55, aspect, 0.1, 800);
+    const g = assertGpu();
+    const camera = new g.PerspectiveCamera(55, aspect, 0.1, 800);
     camera.position.set(50, 30, 50);
     return camera;
   },
 
   createLighting(scene) {
-    const sun = new GPU.DirectionalLight(0xfff4e6, 2.5);
+    const g = assertGpu();
+    const sun = new g.DirectionalLight(0xfff4e6, 2.5);
     sun.position.set(30, 50, 20);
-    scene.add(sun);
+    (scene as any).add(sun);
 
-    const hemi = new GPU.HemisphereLight(0x87ceeb, 0x556b2f, 0.5);
-    scene.add(hemi);
+    const hemi = new g.HemisphereLight(0x87ceeb, 0x556b2f, 0.5);
+    (scene as any).add(hemi);
 
-    const fill = new GPU.DirectionalLight(0xadd8e6, 0.4);
+    const fill = new g.DirectionalLight(0xadd8e6, 0.4);
     fill.position.set(-20, 10, -20);
-    scene.add(fill);
+    (scene as any).add(fill);
 
-    return { sun, hemi, fill };
+    return { sun: sun as any, hemi: hemi as any, fill: fill as any };
   },
 
   createEnvironment() {
