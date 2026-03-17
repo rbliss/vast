@@ -70,6 +70,26 @@ window.__snapshot = snapshotUi.take;
 
 const hud = createHud(mustEl('fps'));
 
+// ── Debug overlay toggle ──
+const overlayBtn = mustEl<HTMLButtonElement>('overlayBtn');
+const overlayLabels: Record<string, string> = {
+  none: 'Overlay: Off',
+  slope: 'Slope',
+  curvature: 'Curvature',
+  flow: 'Flow',
+};
+
+function updateOverlayButton() {
+  const mode = app.getOverlayMode();
+  overlayBtn.textContent = overlayLabels[mode];
+  overlayBtn.classList.toggle('active', mode !== 'none');
+}
+
+overlayBtn.addEventListener('click', () => {
+  app.cycleOverlay();
+  updateOverlayButton();
+});
+
 // ── Clay mode toggle ──
 const clayBtn = mustEl<HTMLButtonElement>('clayBtn');
 const clayParam = params.get('clay');

@@ -11,6 +11,7 @@ import type { DprController } from './controls/dprController';
 import type { RendererBackend, RendererLike } from './backend/types';
 import type { TerrainSource } from './terrain/terrainSource';
 import type { WorldDocumentV0 } from './document';
+import { applyDebugOverlay, type OverlayMode } from './terrain/debugOverlay';
 
 import { getBackend } from './backend';
 import { createOrbitMovement } from './controls/orbitMovement';
@@ -57,6 +58,7 @@ export class TerrainApp {
   private _activeRadius: number;
   private _clayMatDisp: MeshStandardMaterial | null;
   private _clayMatNoDisp: MeshStandardMaterial | null;
+  private _overlayMode: OverlayMode;
 
   /** Async factory — initializes WebGPU backend + TSL materials. */
   static async createAsync(
@@ -104,6 +106,7 @@ export class TerrainApp {
     this._clayMode = false;
     this._clayMatDisp = null;
     this._clayMatNoDisp = null;
+    this._overlayMode = 'none';
     this._sunLight.position.copy(env.sunDirection).multiplyScalar(50);
     (this.scene as any).add(this._sunLight.target);
 
@@ -221,6 +224,31 @@ export class TerrainApp {
     return this._clayMode;
   }
 
+  // ── Debug overlay ──
+
+  getOverlayMode(): OverlayMode { return this._overlayMode; }
+
+  setOverlayMode(mode: OverlayMode): void {
+    this._overlayMode = mode;
+    this._applyOverlayToAllSlots();
+  }
+
+  cycleOverlay(): OverlayMode {
+    const modes: OverlayMode[] = ['none', 'slope', 'curvature', 'flow'];
+    const idx = modes.indexOf(this._overlayMode);
+    this._overlayMode = modes[(idx + 1) % modes.length];
+    this._applyOverlayToAllSlots();
+    return this._overlayMode;
+  }
+
+  private _applyOverlayToAllSlots(): void {
+    for (const slot of this.slots) {
+      if (slot.mesh.visible) {
+        applyDebugOverlay(slot, this.terrain, this._overlayMode);
+      }
+    }
+  }
+
   private _buildSlots(): void {
     for (let dz = -HORIZON_GRID_RADIUS; dz <= HORIZON_GRID_RADIUS; dz++) {
       for (let dx = -HORIZON_GRID_RADIUS; dx <= HORIZON_GRID_RADIUS; dx++) {
@@ -245,6 +273,10 @@ export class TerrainApp {
       if (rebuildChunkSlot(slot, this.centerCX, this.centerCZ, this.terrain)) {
         const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
         this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= BASE_GRID_RADIUS, this.terrain);
+        // Recompute overlay for rebuilt slots
+        if (this._overlayMode !== 'none' && slot.mesh.visible) {
+          applyDebugOverlay(slot, this.terrain, this._overlayMode);
+        }
         rebuilt++;
       }
     }
@@ -278,30 +310,31 @@ export class TerrainApp {
 
     for (const slot of this.slots) {
       const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
+      const wasVisible = slot.mesh.visible;
+      let visible: boolean;
 
       if (d <= SHALLOW_GRID_RADIUS) {
-        const visible = d <= this._activeRadius;
-        slot.mesh.visible = visible;
+        visible = d <= this._activeRadius;
+      } else if (this._coverageMode !== 'horizon') {
+        visible = false;
+      } else {
+        const toChunkX = slot.dx;
+        const toChunkZ = slot.dz;
+        const toChunkLen = Math.sqrt(toChunkX * toChunkX + toChunkZ * toChunkZ) || 1;
+        const forwardDot = (dir.x * toChunkX + dir.z * toChunkZ) / toChunkLen;
+        visible = forwardDot > HORIZON_FORWARD_DOT;
+      }
+
+      slot.mesh.visible = visible;
+      if (!this._clayMode) {
         slot.foliage.grass.visible = visible;
         slot.foliage.rock.visible = visible;
         slot.foliage.shrub.visible = visible;
-      } else {
-        if (this._coverageMode !== 'horizon') {
-          slot.mesh.visible = false;
-          slot.foliage.grass.visible = false;
-          slot.foliage.rock.visible = false;
-          slot.foliage.shrub.visible = false;
-        } else {
-          const toChunkX = slot.dx;
-          const toChunkZ = slot.dz;
-          const toChunkLen = Math.sqrt(toChunkX * toChunkX + toChunkZ * toChunkZ) || 1;
-          const forwardDot = (dir.x * toChunkX + dir.z * toChunkZ) / toChunkLen;
-          const visible = forwardDot > HORIZON_FORWARD_DOT;
-          slot.mesh.visible = visible;
-          slot.foliage.grass.visible = visible;
-          slot.foliage.rock.visible = visible;
-          slot.foliage.shrub.visible = visible;
-        }
+      }
+
+      // Apply overlay to newly visible slots
+      if (visible && !wasVisible && this._overlayMode !== 'none') {
+        applyDebugOverlay(slot, this.terrain, this._overlayMode);
       }
     }
   }
