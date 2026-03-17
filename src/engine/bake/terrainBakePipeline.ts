@@ -46,16 +46,16 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
   }
   const tSample = performance.now() - tSample0;
 
-  // ── Stage 1b: Generate resistance field ──
-  const resistance = generateResistanceGrid(grid, n, n, extent, cellSize);
-  console.log(`[bake] resistance field generated`);
+  // ── Stage 2: Stream-power erosion (with dynamic per-iteration resistance) ──
+  // Resistance generator: recomputes strata from current evolving heights each iteration
+  const resistanceGen = (heights: Float32Array) => generateResistanceGrid(heights, n, n, extent, cellSize);
+  console.log(`[bake] resistance: dynamic per-iteration strata`);
 
-  // ── Stage 2: Stream-power erosion (resistance-aware) ──
   let spResult: ReturnType<typeof streamPowerErosion> | null = null;
   let tStreamPower = 0;
   if (erosion.streamPower.enabled) {
     const t = performance.now();
-    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower, resistance);
+    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower, resistanceGen);
     tStreamPower = performance.now() - t;
     console.log(`[bake] stream-power: ${erosion.streamPower.iterations} iterations (${tStreamPower.toFixed(0)}ms)`);
   }

@@ -415,10 +415,16 @@ export interface StreamPowerResult {
   deposition: Float32Array;
 }
 
+/**
+ * Resistance generator: called each iteration with current heights
+ * to produce a per-cell erodibility grid (0 = resistant, 1 = soft).
+ */
+export type ResistanceGenerator = (heights: Float32Array) => Float32Array;
+
 export function streamPowerErosion(
   grid: Float32Array, w: number, h: number,
   cellSize: number, params: StreamPowerParams,
-  resistance?: Float32Array,
+  resistanceGen?: ResistanceGenerator,
 ): StreamPowerResult {
   const { iterations, erosionK, areaExponent, slopeExponent, dt,
           diffusionRate, minSlope, upliftRate, maxErosion,
@@ -436,6 +442,9 @@ export function streamPowerErosion(
   let lastSlopes: Float32Array = new Float32Array(n);
 
   for (let iter = 0; iter < iterations; iter++) {
+    // Step 0: Recompute resistance from current heights (dynamic strata)
+    const resistance = resistanceGen ? resistanceGen(grid) : null;
+
     // Step 1: Flow accumulation + receiver graph
     const flowResult = computeFlowAccumulation(grid, w, h, cellSize);
     const { area, receiver } = flowResult;

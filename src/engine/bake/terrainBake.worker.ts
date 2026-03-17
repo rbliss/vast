@@ -58,16 +58,14 @@ function executeBakeInWorker(request: TerrainBakeRequest): TerrainBakeArtifacts 
   }
   const tSample = performance.now() - tSample0;
 
-  // Stage 1b: Resistance field
-  const resistance = generateResistanceGrid(grid, n, n, extent, cellSize);
-
-  // Stage 2: Stream-power (resistance-aware)
+  // Stage 2: Stream-power (dynamic per-iteration resistance)
+  const resistanceGen = (heights: Float32Array) => generateResistanceGrid(heights, n, n, extent, cellSize);
   reportProgress('stream-power', t0);
   let spResult: ReturnType<typeof streamPowerErosion> | null = null;
   let tStreamPower = 0;
   if (erosion.streamPower.enabled) {
     const t = performance.now();
-    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower, resistance);
+    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower, resistanceGen);
     tStreamPower = performance.now() - t;
   }
 
