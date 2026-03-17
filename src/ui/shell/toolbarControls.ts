@@ -78,6 +78,7 @@ export class ToolbarControls extends LitElement {
 
       <div class="separator"></div>
 
+      <button @click=${() => this._emit('blank-canvas')}>Blank Canvas</button>
       <button @click=${() => this._emit('test-environment')}>Test Environment</button>
       <button @click=${() => this._emit('reset-canvas')}>Reset Canvas</button>
     `;

@@ -365,8 +365,8 @@ export class TerrainApp {
   get isEditable(): boolean { return this._editableHF !== null; }
 
   /** Initialize editable heightfield mode (blank canvas) */
-  initEditableMode(gridSize: number = 256, extent: number = 200): void {
-    this._editableHF = new EditableHeightfield(gridSize, extent);
+  initEditableMode(gridSize: number = 256, extent: number = 200, existing?: EditableHeightfield): void {
+    this._editableHF = existing ?? new EditableHeightfield(gridSize, extent);
     this.terrain = this._editableHF;
     // Force rebuild all chunks
     this.centerCX = Infinity;

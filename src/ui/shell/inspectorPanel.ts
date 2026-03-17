@@ -47,11 +47,16 @@ export class InspectorPanel extends LitElement {
   @state() private _needsRebake = false;
   @state() private _bakeProgress = '';
 
+  // Brush (blank canvas)
+  @state() private _brushRadius = 15;
+  @state() private _brushStrength = 3;
+
   // Section collapse
   @state() private _sceneOpen = true;
   @state() private _terrainOpen = true;
   @state() private _materialsOpen = false;
   @state() private _scatterOpen = false;
+  @state() private _brushOpen = true;
 
   private _unsubs: (() => void)[] = [];
 
@@ -163,11 +168,29 @@ export class InspectorPanel extends LitElement {
 
   render() {
     return html`
+      ${this._renderBrush()}
       ${this._renderScene()}
       ${this._renderTerrain()}
       ${this._renderMaterials()}
       ${this._renderScatter()}
     `;
+  }
+
+  // ── Brush (blank canvas sculpt) ──
+  private _renderBrush() {
+    return html`
+      <div class="section">
+        <div class="section-header" @click=${() => this._brushOpen = !this._brushOpen}>
+          <span class="arrow">${this._brushOpen ? '▼' : '▶'}</span>
+          Brush
+          <span class="class-tag tag-live">Live</span>
+        </div>
+        ${this._brushOpen ? html`<div class="section-body">
+          ${this._slider('Radius', this._brushRadius, 3, 40, 1, v => { this._brushRadius = v; this._fire('set-brush', { radius: v, strength: this._brushStrength }); })}
+          ${this._slider('Strength', this._brushStrength, 0.5, 10, 0.5, v => { this._brushStrength = v; this._fire('set-brush', { radius: this._brushRadius, strength: v }); })}
+          <div class="status-text">Click terrain to raise</div>
+        </div>` : ''}
+      </div>`;
   }
 
   // ── Scene (LIVE) ──

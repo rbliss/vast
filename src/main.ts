@@ -332,8 +332,12 @@ shell.addEventListener('rebake', (async () => {
 }) as EventListener);
 
 // ── Environment switching ──
+shell.addEventListener('blank-canvas', () => {
+  window.location.href = '/';
+});
+
 shell.addEventListener('test-environment', () => {
-  window.location.href = '/?testenv&debug';
+  window.location.href = '/?testenv';
 });
 
 shell.addEventListener('reset-canvas', () => {
@@ -342,6 +346,11 @@ shell.addEventListener('reset-canvas', () => {
 
 // ── Save / Open / Autosave ──
 shell.addEventListener('save-project', (async () => {
+  if (!isTestEnv) {
+    toolbar.saveStatus = 'Save not available in canvas mode';
+    setTimeout(() => { toolbar.saveStatus = ''; }, 2000);
+    return;
+  }
   toolbar.saveStatus = 'Saving...';
   const ok = await saveDocument(worldDoc);
   if (ok) {
@@ -427,12 +436,18 @@ if (!isTestEnv || !params.has('textured')) {
 }
 
 // ── Blank canvas: init editable heightfield + sculpt interaction ──
-if (!isTestEnv) {
-  app.initEditableMode(256, 200);
+if (!isTestEnv && terrainSource instanceof (await import('./engine/terrain/editableHeightfield')).EditableHeightfield) {
+  app.initEditableMode(256, 200, terrainSource as any);
 
   // Sculpt: click to raise terrain
   let brushRadius = 15;
   let brushStrength = 3;
+
+  // Wire brush controls from inspector
+  shell.addEventListener('set-brush', ((e: CustomEvent) => {
+    brushRadius = e.detail.radius;
+    brushStrength = e.detail.strength;
+  }) as EventListener);
 
   viewportHost.addEventListener('click', (e: MouseEvent) => {
     // Convert mouse to NDC
