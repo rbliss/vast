@@ -48,8 +48,8 @@ export class InspectorPanel extends LitElement {
   @state() private _bakeProgress = '';
 
   // Brush (blank canvas)
-  @state() private _brushRadius = 15;
-  @state() private _brushStrength = 3;
+  @state() private _brushRadius = 10;
+  @state() private _brushStrength = 15;
 
   // Section collapse
   @state() private _sceneOpen = true;
@@ -187,7 +187,7 @@ export class InspectorPanel extends LitElement {
         </div>
         ${this._brushOpen ? html`<div class="section-body">
           ${this._slider('Radius', this._brushRadius, 3, 40, 1, v => { this._brushRadius = v; this._fire('set-brush', { radius: v, strength: this._brushStrength }); })}
-          ${this._slider('Strength', this._brushStrength, 0.5, 10, 0.5, v => { this._brushStrength = v; this._fire('set-brush', { radius: this._brushRadius, strength: v }); })}
+          ${this._slider('Strength', this._brushStrength, 1, 30, 1, v => { this._brushStrength = v; this._fire('set-brush', { radius: this._brushRadius, strength: v }); })}
           <div class="status-text">Click terrain to raise</div>
         </div>` : ''}
       </div>`;

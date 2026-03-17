@@ -440,8 +440,8 @@ if (!isTestEnv && terrainSource instanceof (await import('./engine/terrain/edita
   app.initEditableMode(256, 200, terrainSource as any);
 
   // Sculpt: click to raise terrain
-  let brushRadius = 15;
-  let brushStrength = 3;
+  let brushRadius = 10;
+  let brushStrength = 15;
 
   // Wire brush controls from inspector
   shell.addEventListener('set-brush', ((e: CustomEvent) => {
@@ -449,6 +449,24 @@ if (!isTestEnv && terrainSource instanceof (await import('./engine/terrain/edita
     brushStrength = e.detail.strength;
   }) as EventListener);
 
+  // Brush preview on hover
+  viewportHost.addEventListener('mousemove', (e: MouseEvent) => {
+    const rect = viewportHost.getBoundingClientRect();
+    const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    const hit = app.raycastTerrain(ndcX, ndcY);
+    if (hit) {
+      app.updateBrushPreview(hit.x, hit.z, brushRadius);
+    } else {
+      app.hideBrushPreview();
+    }
+  });
+
+  viewportHost.addEventListener('mouseleave', () => {
+    app.hideBrushPreview();
+  });
+
+  // Sculpt: click to raise
   viewportHost.addEventListener('click', (e: MouseEvent) => {
     // Convert mouse to NDC
     const rect = viewportHost.getBoundingClientRect();

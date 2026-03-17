@@ -122,7 +122,7 @@ export function createBlankCanvasDocument(): WorldDocument {
     materials: { snowThreshold: 1, rockSlopeMin: 0.25, rockSlopeMax: 0.55, sedimentEmphasis: 0 },
     scatter: { grassDensity: 0, shrubDensity: 0, rockDensity: 0, alpineCutoff: 1, debrisEmphasis: 0 },
     scene: {
-      camera: { position: [100, 60, 100], target: [0, 0, 0], fov: 55 },
+      camera: { position: [50, 25, 50], target: [0, 0, 0], fov: 55 },
       sun: { azimuth: 210, elevation: 35 },
       exposure: 1.0,
       waterLevel: null,

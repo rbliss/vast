@@ -361,8 +361,34 @@ export class TerrainApp {
   // ── Sculpt: raise terrain with brush stamps ──
 
   private _editableHF: EditableHeightfield | null = null;
+  private _brushPreview: THREE.Mesh | null = null;
 
   get isEditable(): boolean { return this._editableHF !== null; }
+
+  /** Create/update brush preview ring on terrain */
+  updateBrushPreview(worldX: number, worldZ: number, radius: number): void {
+    if (!this._brushPreview) {
+      const geo = new THREE.RingGeometry(0.9, 1.0, 32);
+      geo.rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.5,
+        depthTest: false,
+      });
+      this._brushPreview = new THREE.Mesh(geo, mat);
+      this._brushPreview.renderOrder = 100;
+      (this.scene as any).add(this._brushPreview);
+    }
+    const h = this.terrain.sampleHeight(worldX, worldZ);
+    this._brushPreview.position.set(worldX, h + 0.2, worldZ);
+    this._brushPreview.scale.set(radius, radius, radius);
+    this._brushPreview.visible = true;
+  }
+
+  hideBrushPreview(): void {
+    if (this._brushPreview) this._brushPreview.visible = false;
+  }
 
   /** Initialize editable heightfield mode (blank canvas) */
   initEditableMode(gridSize: number = 256, extent: number = 200, existing?: EditableHeightfield): void {
@@ -388,7 +414,9 @@ export class TerrainApp {
         slot.cz = Infinity;
       }
     }
-    // updateChunks will detect the invalidated slots and rebuild them
+    // Force updateChunks to run by resetting center
+    this.centerCX = Infinity;
+    this.centerCZ = Infinity;
     this.updateChunks();
   }
 
