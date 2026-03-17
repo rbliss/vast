@@ -16,7 +16,7 @@
 
 import { fbm, ridgedFBM } from './noise';
 
-export const MACRO_HEIGHT_SCALE = 12;
+export const MACRO_HEIGHT_SCALE = 20;
 
 // ── Domain warp ──
 // Gentle coordinate distortion to break grid-aligned ridge patterns.
@@ -46,41 +46,48 @@ export function sampleTerrainBase(x: number, z: number): number {
 //   5. Peak shape — smooth FBM, no sharp ridges
 
 // Spine direction: roughly NW-SE diagonal
-const RANGE_DIR_X = 0.7071;   // normalized (1/√2, 0, 1/√2) rotated slightly
+const RANGE_DIR_X = 0.7071;
 const RANGE_DIR_Z = 0.7071;
 // Perpendicular direction
 const RANGE_PERP_X = -RANGE_DIR_Z;
 const RANGE_PERP_Z = RANGE_DIR_X;
-// Range width (half-width in world units for Gaussian falloff)
-const RANGE_HALF_WIDTH = 60;
-// Range offset from origin
-const RANGE_OFFSET = 20;
+// Range offset — small so it's visible near origin/default camera
+const RANGE_OFFSET = 10;
+// Range height multiplier — makes the range dominate the skyline
+const RANGE_HEIGHT = 2.5;
+
+// 2-part cross profile widths:
+const SHOULDER_HALF_WIDTH = 40;  // broad mountain mass
+const CREST_HALF_WIDTH = 15;     // narrow higher core ridge
 
 export function sampleTerrainRange(x: number, z: number): number {
-  // Project world position onto range-space coordinates
   const along = x * RANGE_DIR_X + z * RANGE_DIR_Z;
   let across = x * RANGE_PERP_X + z * RANGE_PERP_Z - RANGE_OFFSET;
 
-  // Spine warp — gentle low-frequency meander so the range isn't straight
-  const spineWarp = fbm(along * 0.005 + 42.7, 0.5, 2, 2.0, 0.5) * 25.0;
+  // Spine warp — meander so the range isn't straight
+  const spineWarp = fbm(along * 0.005 + 42.7, 0.5, 2, 2.0, 0.5) * 20.0;
   across += spineWarp;
 
-  // Cross-range falloff — broad smooth bell curve
-  const crossFade = Math.exp(-(across * across) / (2 * RANGE_HALF_WIDTH * RANGE_HALF_WIDTH));
+  // 2-part cross profile: broad shoulders + narrow crest
+  const shoulderFade = Math.exp(-(across * across) / (2 * SHOULDER_HALF_WIDTH * SHOULDER_HALF_WIDTH));
+  const crestFade = Math.exp(-(across * across) / (2 * CREST_HALF_WIDTH * CREST_HALF_WIDTH));
 
-  // Along-range modulation — creates peaks, saddles, subranges
-  // Low frequency for broad features
-  const alongMod = fbm(along * 0.008 + 17.3, along * 0.003 + 9.1, 3, 2.0, 0.5) * 0.5 + 0.5;
-  // Occasional higher massif sections
-  const massif = Math.max(0, fbm(along * 0.004 + 51.7, along * 0.002, 2, 2.0, 0.5));
+  // Along-range modulation — peaks, saddles, subranges
+  const alongBase = fbm(along * 0.008 + 17.3, along * 0.003 + 9.1, 3, 2.0, 0.5) * 0.5 + 0.5;
+  // Massif sections — lower frequency, stronger presence
+  const massif = Math.max(0, fbm(along * 0.003 + 51.7, along * 0.001, 2, 2.0, 0.5));
+  // Along-range variation for crest height
+  const crestMod = fbm(along * 0.006 + 73.1, along * 0.004 + 11.3, 2, 2.0, 0.5) * 0.5 + 0.5;
 
-  // Peak shape — smooth, never sharp
-  const peakHeight = alongMod * 0.7 + massif * 0.3;
+  // Shoulder height — broad mountain mass
+  const shoulderHeight = (alongBase * 0.5 + massif * 0.5) * shoulderFade;
+  // Crest height — narrow ridge on top of shoulders
+  const crestHeight = crestMod * 0.8 * crestFade;
 
-  // Cross-range variation — slight asymmetry and secondary ridges
-  const crossDetail = fbm(across * 0.02 + along * 0.01, along * 0.008, 2, 2.0, 0.5) * 0.15;
+  // Cross-range asymmetry — slight variation
+  const crossDetail = fbm(across * 0.03 + along * 0.01, along * 0.008, 2, 2.0, 0.5) * 0.1;
 
-  return crossFade * (peakHeight + crossDetail);
+  return (shoulderHeight + crestHeight + crossDetail * shoulderFade) * RANGE_HEIGHT;
 }
 
 // ── Layer 3: Secondary mountain shaping ──
@@ -110,5 +117,5 @@ export function terrainHeight(x: number, z: number): number {
   const range = sampleTerrainRange(x, z);
   const mountain = sampleTerrainMountain(x, z);
   const relief = sampleTerrainRelief(x, z);
-  return base * 0.3 + range * 0.4 + mountain * 0.2 + relief;
+  return base * 0.25 + range * 0.5 + mountain * 0.15 + relief;
 }

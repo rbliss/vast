@@ -33,8 +33,8 @@ export const webglBackend: RendererBackend = {
   },
 
   createCamera(aspect: number) {
-    const camera = new THREE.PerspectiveCamera(55, aspect, 0.1, 800);
-    camera.position.set(50, 30, 50);
+    const camera = new THREE.PerspectiveCamera(55, aspect, 0.1, 1200);
+    camera.position.set(50, 50, 50);
     return camera;
   },
 

@@ -17,12 +17,12 @@ export interface OrbitMovement {
 
 export function createOrbitMovement(camera: PerspectiveCamera, domElement: HTMLElement): OrbitMovement {
   const controls = new OrbitControls(camera, domElement);
-  controls.target.set(0, 5, 0);
+  controls.target.set(0, 10, 0);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.maxPolarAngle = Math.PI / 2.05;
   controls.minDistance = 3;
-  controls.maxDistance = 300;
+  controls.maxDistance = 500;
   controls.update();
 
   const moveState = { forward: false, back: false, left: false, right: false, fast: false };
