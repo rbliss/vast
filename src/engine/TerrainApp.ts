@@ -60,6 +60,7 @@ export class TerrainApp {
   private _clayMatDisp: MeshStandardMaterial | null;
   private _clayMatNoDisp: MeshStandardMaterial | null;
   private _overlayMode: OverlayMode;
+  private _fieldTextures: FieldTextures | null;
 
   /** Async factory — initializes WebGPU backend + TSL materials. */
   static async createAsync(
@@ -120,6 +121,7 @@ export class TerrainApp {
     this._clayMatDisp = null;
     this._clayMatNoDisp = null;
     this._overlayMode = 'none';
+    this._fieldTextures = fieldTextures;
     this._sunLight.position.copy(env.sunDirection).multiplyScalar(50);
     (this.scene as any).add(this._sunLight.target);
 
@@ -289,7 +291,7 @@ export class TerrainApp {
     for (const slot of this.slots) {
       if (rebuildChunkSlot(slot, this.centerCX, this.centerCZ, this.terrain)) {
         const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
-        this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= BASE_GRID_RADIUS, this.terrain);
+        this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= BASE_GRID_RADIUS, this.terrain, this._fieldTextures);
         // Recompute overlay for rebuilt slots
         if (this._overlayMode !== 'none' && slot.mesh.visible) {
           applyDebugOverlay(slot, this.terrain, this._overlayMode);

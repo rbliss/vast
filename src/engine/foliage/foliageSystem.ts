@@ -1,13 +1,21 @@
 /**
  * Procedural foliage instancing system.
- * 3 layers: grass clumps, small rocks, bushes.
- * Deterministic placement from chunk coordinates.
+ * Phase C: field-aware scatter driven by slope, altitude, deposition.
+ *
+ * 3 layers: grass clumps, rocks/debris, shrubs.
+ * Placement respects terrain analysis fields:
+ *   - no vegetation above snow line
+ *   - more rocks on steep slopes and at high altitude
+ *   - grass on stable mid-altitude flats
+ *   - debris in depositional zones (fans, channel exits)
+ *   - shrubs in transition zones
  */
 
 import * as THREE from 'three';
 import type { Scene } from 'three';
 import { CHUNK_SIZE, GRASS_PER_CHUNK, ROCK_PER_CHUNK, SHRUB_PER_CHUNK } from '../config';
 import type { TerrainSource } from '../terrain/terrainSource';
+import type { FieldTextures } from '../terrain/fieldTextures';
 import type { FoliagePayload, FoliageSystem } from '../types';
 
 function placeHash(x: number, y: number): number {
@@ -48,13 +56,6 @@ function makeShrubGeo() {
   return new THREE.IcosahedronGeometry(0.25, 1);
 }
 
-/**
- * Create the foliage system bound to a scene.
- * Geometry and materials are created once (singletons within this closure).
- *
- * @param {THREE.Scene} scene - The scene to add instanced meshes to.
- * @returns {{ createInstances: () => object, rebuild: (foliage, cx, cz, isFar) => void }}
- */
 export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageSystem {
   const grassGeo = makeGrassGeo();
   const rockGeo  = makeRockGeo();
@@ -66,7 +67,6 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
 
   const _dummy = new THREE.Object3D();
 
-  /** Create persistent InstancedMesh trio for a slot. Returns instance payload. */
   function createInstances(): FoliagePayload {
     const grass = new THREE.InstancedMesh(grassGeo, grassMat, GRASS_PER_CHUNK);
     const rock  = new THREE.InstancedMesh(rockGeo, rockMat, ROCK_PER_CHUNK);
@@ -78,8 +78,13 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
     return { grass, rock, shrub };
   }
 
-  /** Regenerate foliage transforms for a slot. Deterministic from (cx, cz). */
-  function rebuild(foliage: FoliagePayload, cx: number, cz: number, isFar: boolean, terrain: TerrainSource): void {
+  function rebuild(
+    foliage: FoliagePayload,
+    cx: number, cz: number,
+    isFar: boolean,
+    terrain: TerrainSource,
+    fields?: FieldTextures | null,
+  ): void {
     if (isFar) {
       foliage.grass.count = 0;
       foliage.rock.count = 0;
@@ -92,14 +97,12 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
     const half = CHUNK_SIZE / 2;
     let gi = 0, ri = 0, si = 0;
 
-    // Scatter points using deterministic grid + jitter
-    const step = 1.6; // ~1.6m spacing for grass candidates
+    const step = 1.6;
     const seed = cx * 7919 + cz * 104729;
 
     for (let lz = -half + 1; lz < half - 1; lz += step) {
       for (let lx = -half + 1; lx < half - 1; lx += step) {
         const wx = lx + originX, wz = lz + originZ;
-        // Jitter
         const jx = (placeHash(wx * 13.7, wz * 29.3) - 0.5) * step * 0.8;
         const jz = (placeHash(wx * 41.1, wz * 7.9) - 0.5) * step * 0.8;
         const px = wx + jx, pz = wz + jz;
@@ -114,14 +117,28 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
         const slope = Math.sqrt(fdx * fdx + fdz * fdz);
         const flatness = Math.max(0, 1 - slope * 1.5);
 
-        // Biome noise (must match shader)
-        const bn = placeHash(Math.floor(px * 0.03) + 0.5, Math.floor(pz * 0.03) + 0.5);
+        // Field-aware data
+        let altitude = 0.5; // default mid-altitude
+        let deposition = 0;
+        if (fields) {
+          const f = fields.sampleAt(px, pz);
+          altitude = f.altitude;
+          deposition = f.deposition;
+        }
 
-        // Placement probability from hash
+        // Snow line: no vegetation above ~78% normalized altitude
+        const snowMask = Math.max(0, 1 - Math.max(0, (altitude - 0.72) / 0.12));
+
+        // Biome noise
+        const bn = placeHash(Math.floor(px * 0.03) + 0.5, Math.floor(pz * 0.03) + 0.5);
         const prob = placeHash(px * 97.1 + seed, pz * 53.7 + seed);
 
-        // ── Grass: high flatness, high grass weight ──
-        const wGrass = flatness * Math.max(0, Math.min(1, (bn - 0.25) / 0.35));
+        // ── Grass: flat, mid altitude, below snow, not in heavy deposition ──
+        const grassAlt = Math.max(0, Math.min(1, (altitude - 0.1) / 0.2))
+                       * Math.max(0, Math.min(1, (0.7 - altitude) / 0.15));
+        const depositionDamp = Math.max(0.2, 1 - deposition * 3);
+        const wGrass = flatness * Math.max(0, Math.min(1, (bn - 0.25) / 0.35))
+                     * snowMask * (fields ? grassAlt : 1) * depositionDamp;
         if (prob < wGrass * 0.5 && gi < GRASS_PER_CHUNK) {
           _dummy.position.set(px - originX, h, pz - originZ);
           const sc = 0.7 + placeHash(px * 3.1, pz * 5.7) * 0.8;
@@ -131,11 +148,16 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
           foliage.grass.setMatrixAt(gi++, _dummy.matrix);
         }
 
-        // ── Rock: steeper or rockier areas ──
-        const wRock = Math.min(1, slope * 2);
-        if (prob > 0.85 && wRock > 0.2 && ri < ROCK_PER_CHUNK) {
+        // ── Rock: steep slopes, high altitude, or depositional debris zones ──
+        const wRockSlope = Math.min(1, slope * 2);
+        const wRockAlt = fields ? Math.max(0, (altitude - 0.5) * 1.5) : 0;
+        const wRockDeposition = deposition * 2; // debris in fan/apron areas
+        const wRock = Math.min(1, wRockSlope + wRockAlt * 0.3 + wRockDeposition * 0.4);
+        if (prob > 0.82 && wRock > 0.2 && ri < ROCK_PER_CHUNK) {
           _dummy.position.set(px - originX, h - 0.05, pz - originZ);
-          const sc = 0.4 + placeHash(px * 17.3, pz * 23.1) * 1.2;
+          // Bigger rocks in depositional zones
+          const depScale = 1 + deposition * 1.5;
+          const sc = (0.4 + placeHash(px * 17.3, pz * 23.1) * 1.2) * depScale;
           _dummy.scale.set(sc, sc * 0.6, sc);
           _dummy.rotation.set(
             placeHash(px * 2.3, pz * 9.1) * 0.3,
@@ -146,8 +168,9 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
           foliage.rock.setMatrixAt(ri++, _dummy.matrix);
         }
 
-        // ── Shrub: transition zones (moderate grass) ──
-        const wShrub = flatness * Math.max(0, 1 - Math.abs(bn - 0.45) * 4);
+        // ── Shrub: transition zones, below snow, low deposition ──
+        const wShrub = flatness * Math.max(0, 1 - Math.abs(bn - 0.45) * 4)
+                      * snowMask * depositionDamp;
         if (prob > 0.7 && prob < 0.85 && wShrub > 0.2 && si < SHRUB_PER_CHUNK) {
           _dummy.position.set(px - originX, h, pz - originZ);
           const sc = 0.5 + placeHash(px * 19.7, pz * 31.3) * 0.7;
@@ -166,7 +189,6 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
     foliage.rock.instanceMatrix.needsUpdate = true;
     foliage.shrub.instanceMatrix.needsUpdate = true;
 
-    // Position instance meshes at chunk world origin
     foliage.grass.position.set(originX, 0, originZ);
     foliage.rock.position.set(originX, 0, originZ);
     foliage.shrub.position.set(originX, 0, originZ);

@@ -6,6 +6,7 @@ import type { Texture, MeshStandardMaterial, Mesh, BufferGeometry, BufferAttribu
 import type { DprController } from './controls/dprController';
 import type { LodLevel } from './config';
 import type { TerrainSource } from './terrain/terrainSource';
+import type { FieldTextures } from './terrain/fieldTextures';
 
 export interface TerrainAppOptions {
   debug?: boolean;
@@ -75,7 +76,7 @@ export interface FoliagePayload {
 
 export interface FoliageSystem {
   createInstances: () => FoliagePayload;
-  rebuild: (foliage: FoliagePayload, cx: number, cz: number, isFar: boolean, terrain: TerrainSource) => void;
+  rebuild: (foliage: FoliagePayload, cx: number, cz: number, isFar: boolean, terrain: TerrainSource, fields?: FieldTextures | null) => void;
 }
 
 /** Snapshot API response shape. */

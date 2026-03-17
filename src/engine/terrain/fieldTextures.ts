@@ -18,6 +18,8 @@ export interface FieldTextures {
   fieldMap: THREE.DataTexture;
   /** World-space bounds of the field map */
   extent: number;
+  /** CPU-side field sampler for scatter/foliage placement */
+  sampleAt: (wx: number, wz: number) => { slope: number; altitude: number; curvature: number; deposition: number };
   /** Dispose all GPU resources */
   dispose: () => void;
 }
@@ -172,9 +174,45 @@ export function generateFieldTextures(
 
   console.log(`[fields] baked ${n}x${n} field texture (height range: ${minH.toFixed(1)} - ${maxH.toFixed(1)})`);
 
+  // CPU-side sampler for scatter/foliage placement
+  function sampleAt(wx: number, wz: number) {
+    const gx = ((wx + extent) / (extent * 2)) * (n - 1);
+    const gz = ((wz + extent) / (extent * 2)) * (n - 1);
+
+    if (gx < 0 || gx >= n - 1 || gz < 0 || gz >= n - 1) {
+      return { slope: 0, altitude: 0, curvature: 0, deposition: 0 };
+    }
+
+    const ix = Math.floor(gx);
+    const iz = Math.floor(gz);
+    const fx = gx - ix;
+    const fz = gz - iz;
+
+    // Bilinear interpolation of each channel
+    const i00 = (iz * n + ix) * 4;
+    const i10 = (iz * n + ix + 1) * 4;
+    const i01 = ((iz + 1) * n + ix) * 4;
+    const i11 = ((iz + 1) * n + ix + 1) * 4;
+
+    function bilerp(ch: number) {
+      return data[i00 + ch] * (1 - fx) * (1 - fz) +
+             data[i10 + ch] * fx * (1 - fz) +
+             data[i01 + ch] * (1 - fx) * fz +
+             data[i11 + ch] * fx * fz;
+    }
+
+    return {
+      slope: bilerp(0),
+      altitude: bilerp(1),
+      curvature: bilerp(2),
+      deposition: bilerp(3),
+    };
+  }
+
   return {
     fieldMap,
     extent,
+    sampleAt,
     dispose: () => fieldMap.dispose(),
   };
 }
