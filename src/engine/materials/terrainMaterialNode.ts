@@ -153,7 +153,7 @@ export function createNodeTerrainMaterials(textures: TextureSet): TerrainMateria
         );
         const fade = smoothstep(float(0), float(DISPLACEMENT_FADE_DISTANCE), edgeDist);
         const disp = texture(textures.rockDisp, positionWorld.xz.mul(rk)).x;
-        const offset = ln.mul(disp.mul(DISPLACEMENT_SCALE).sub(Math.abs(DISPLACEMENT_BIAS)).mul(fade));
+        const offset = ln.mul(disp.mul(DISPLACEMENT_SCALE).add(DISPLACEMENT_BIAS).mul(fade));
         return lp.add(offset);
       })();
     }

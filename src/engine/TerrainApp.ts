@@ -76,7 +76,7 @@ export class TerrainApp {
     this._hemiLight = lighting.hemi as THREE.HemisphereLight;
 
     // IBL
-    const env = backend.createEnvironment(this.renderer, this.scene);
+    const env = backend.createEnvironment();
     this._envMap = env.environmentMap;
     this._iblEnabled = true;
     (lighting.sun as THREE.DirectionalLight).position.copy(env.sunDirection).multiplyScalar(50);

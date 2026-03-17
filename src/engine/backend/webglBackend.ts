@@ -5,8 +5,7 @@
 
 import * as THREE from 'three';
 import type { RendererBackend, BackendRenderer, BackendLighting, BackendEnvironment } from './types';
-import { createEnvironment } from '../core/environment';
-import { SUN_ELEVATION, SUN_AZIMUTH } from '../config';
+import { generateEnvironment } from '../core/environment';
 
 export const webglBackend: RendererBackend = {
   mode: 'webgl',
@@ -54,8 +53,8 @@ export const webglBackend: RendererBackend = {
     return { sun, hemi, fill };
   },
 
-  createEnvironment(renderer, scene) {
-    return createEnvironment(renderer, scene, false);
+  createEnvironment() {
+    return generateEnvironment();
   },
 
   captureFrame(renderer, scene, camera) {

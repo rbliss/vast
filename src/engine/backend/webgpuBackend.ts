@@ -7,7 +7,7 @@
 
 // @ts-nocheck — three/webgpu types not fully declared
 import type { RendererBackend, BackendRenderer, BackendLighting, BackendEnvironment } from './types';
-import { createEnvironment } from '../core/environment';
+import { generateEnvironment } from '../core/environment';
 
 // Cached three/webgpu module — populated by createRenderer()
 let GPU: any = null;
@@ -61,8 +61,8 @@ export const webgpuBackend: RendererBackend = {
     return { sun, hemi, fill };
   },
 
-  createEnvironment(renderer, scene) {
-    return createEnvironment(renderer, scene, true);
+  createEnvironment() {
+    return generateEnvironment();
   },
 
   captureFrame(renderer, scene, camera) {

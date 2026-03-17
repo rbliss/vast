@@ -33,6 +33,6 @@ export interface RendererBackend {
   createScene(): Scene;
   createCamera(aspect: number): PerspectiveCamera;
   createLighting(scene: Scene): BackendLighting;
-  createEnvironment(renderer: WebGLRenderer, scene: Scene): BackendEnvironment;
+  createEnvironment(): BackendEnvironment;
   captureFrame(renderer: WebGLRenderer, scene: Scene, camera: PerspectiveCamera): string;
 }
