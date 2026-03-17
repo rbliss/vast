@@ -355,6 +355,16 @@ export class TerrainApp {
     sunWarmthUniform.value = warmth * 0.6; // damped so it's subtle
   }
 
+  // ── Water / cloud controls ──
+
+  setWaterLevel(level: number): void {
+    if (this._water) this._water.setWaterLevel(level);
+  }
+
+  setCloudCoverage(coverage: number): void {
+    if (this._clouds) this._clouds.setCoverage(coverage);
+  }
+
   // ── Exposure / tone mapping ──
 
   getExposure(): number { return this._exposure; }

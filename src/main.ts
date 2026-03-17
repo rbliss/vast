@@ -9,6 +9,7 @@ import './utils/runtimeErrors';
 // Register shell components (must be before DOM access)
 import './ui/shell/editorShell';
 import './ui/shell/toolbarControls';
+import './ui/shell/inspectorPanel';
 
 import { TerrainApp } from './engine/TerrainApp';
 import { mustEl } from './engine/types';
@@ -20,6 +21,7 @@ import type { EditorShell } from './ui/shell/editorShell';
 import type { ToolbarControls } from './ui/shell/toolbarControls';
 import { viewportStore } from './stores/viewportStore';
 import { projectStore } from './stores/projectStore';
+import { authoringStore } from './stores/authoringStore';
 import { runtimeStore } from './stores/runtimeStore';
 
 // ── Parse URL params ──
@@ -174,6 +176,42 @@ shell.addEventListener('cycle-sun', () => {
 shell.addEventListener('take-snapshot', () => {
   snapshotUi.take();
 });
+
+// ── Inspector events (Class A — live) ──
+shell.addEventListener('set-sun', ((e: CustomEvent) => {
+  const { azimuth, elevation } = e.detail;
+  app.setSunDirection(azimuth, elevation);
+  viewportStore.setSunDirection(azimuth, elevation);
+  worldDoc.scene.sun.azimuth = azimuth;
+  worldDoc.scene.sun.elevation = elevation;
+  syncToolbar();
+}) as EventListener);
+
+shell.addEventListener('set-exposure', ((e: CustomEvent) => {
+  app.setExposure(e.detail);
+  viewportStore.setExposure(e.detail);
+  worldDoc.scene.exposure = e.detail;
+}) as EventListener);
+
+shell.addEventListener('set-clouds', ((e: CustomEvent) => {
+  app.setCloudCoverage(e.detail);
+  viewportStore.setCloudCoverage(e.detail);
+  worldDoc.scene.cloudCoverage = e.detail;
+}) as EventListener);
+
+shell.addEventListener('set-water', ((e: CustomEvent) => {
+  app.setWaterLevel(e.detail);
+  viewportStore.setWaterLevel(e.detail);
+  worldDoc.scene.waterLevel = e.detail;
+}) as EventListener);
+
+// ── Inspector events (Class C — rebake required) ──
+shell.addEventListener('set-preset', ((e: CustomEvent) => {
+  worldDoc.terrain.preset = e.detail;
+  projectStore.setPresetName(e.detail);
+  authoringStore.setNeedsRebake(true);
+  projectStore.markDirty();
+}) as EventListener);
 
 // ── Apply document scene state to engine + stores ──
 app.setSunDirection(worldDoc.scene.sun.azimuth, worldDoc.scene.sun.elevation);
