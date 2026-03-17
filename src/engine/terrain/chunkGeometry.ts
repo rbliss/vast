@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import type { Scene, MeshStandardMaterial, BufferGeometry, BufferAttribute as BA } from 'three';
 import {
   CHUNK_SIZE, SKIRT_DEPTH, SKIRT_INSET, TEXTURE_WORLD_SIZE,
-  LOD_NEAR, LOD_MID, LOD_FAR, LOD_ULTRA_FAR,
+  LOD_NEAR, LOD_MID, LOD_FAR, LOD_ULTRA_FAR, LOD_HORIZON,
 } from '../config';
 import type { LodLevel } from '../config';
 import type { ChunkSlot, FoliagePayload } from '../types';
@@ -180,10 +180,14 @@ export function stitchEdge(pos: THREE.BufferAttribute, edgeVerts: number[], rati
   }
 }
 
-/** Get LOD for a ring position. d >= 3 uses ultra-far (16 segments). */
+/** Get LOD for a ring position. d=0 near, d=1 mid, d=2 far, d=3 ultra-far, d>=4 horizon. */
 export function lodForRingPos(dx: number, dz: number): LodLevel {
   const d = Math.max(Math.abs(dx), Math.abs(dz));
-  return d === 0 ? LOD_NEAR : d === 1 ? LOD_MID : d === 2 ? LOD_FAR : LOD_ULTRA_FAR;
+  if (d === 0) return LOD_NEAR;
+  if (d === 1) return LOD_MID;
+  if (d === 2) return LOD_FAR;
+  if (d === 3) return LOD_ULTRA_FAR;
+  return LOD_HORIZON;
 }
 
 /** Mutate existing buffers in-place. Zero allocation. */

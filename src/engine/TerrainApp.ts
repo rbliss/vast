@@ -18,7 +18,12 @@ import { loadTextureSet } from './materials/textureSet';
 import { createTerrainMaterials } from './materials/terrainMaterial';
 import { createChunkSlot, rebuildChunkSlot, lodForRingPos } from './terrain/chunkGeometry';
 import { createFoliageSystem } from './foliage/foliageSystem';
-import { CHUNK_SIZE, BASE_GRID_RADIUS, MAX_GRID_RADIUS, SHALLOW_PITCH_THRESHOLD, FOLIAGE_ENV_INTENSITY } from './config';
+import {
+  CHUNK_SIZE, BASE_GRID_RADIUS, SHALLOW_GRID_RADIUS, HORIZON_GRID_RADIUS,
+  SHALLOW_PITCH_THRESHOLD, HORIZON_PITCH_THRESHOLD,
+  HORIZON_DISTANCE_THRESHOLD, HORIZON_HEIGHT_THRESHOLD, HORIZON_FORWARD_DOT,
+  FOLIAGE_ENV_INTENSITY,
+} from './config';
 import { TERRAIN_ENV_MAP_INTENSITY, HEMI_INTENSITY_IBL_ON, HEMI_INTENSITY_IBL_OFF } from './materials/terrain/featureModel';
 
 export class TerrainApp {
@@ -45,6 +50,7 @@ export class TerrainApp {
   private _iblEnabled: boolean;
   private _hemiLight: THREE.HemisphereLight;
   private _envMap: THREE.Texture;
+  private _coverageMode: 'base' | 'shallow' | 'horizon';
   private _activeRadius: number;
 
   /** Async factory — resolves backend + lazy material imports. */
@@ -120,10 +126,11 @@ export class TerrainApp {
     // Foliage
     this.foliage = createFoliageSystem(this.scene, FOLIAGE_ENV_INTENSITY);
 
-    // Chunk pool — preallocate max radius, activate based on camera pitch
+    // Chunk pool — preallocate horizon radius, activate based on camera state
     this.slots = [];
     this.centerCX = Infinity;
     this.centerCZ = Infinity;
+    this._coverageMode = 'base';
     this._activeRadius = BASE_GRID_RADIUS;
     this._buildSlots();
     this.updateChunks();
@@ -156,8 +163,8 @@ export class TerrainApp {
   }
 
   private _buildSlots(): void {
-    for (let dz = -MAX_GRID_RADIUS; dz <= MAX_GRID_RADIUS; dz++) {
-      for (let dx = -MAX_GRID_RADIUS; dx <= MAX_GRID_RADIUS; dx++) {
+    for (let dz = -HORIZON_GRID_RADIUS; dz <= HORIZON_GRID_RADIUS; dz++) {
+      for (let dx = -HORIZON_GRID_RADIUS; dx <= HORIZON_GRID_RADIUS; dx++) {
         const lod = lodForRingPos(dx, dz);
         const foliagePayload = this.foliage.createInstances();
         const slot = createChunkSlot(lod, dx, dz, this.scene, this.matDisp, this.matNoDisp, foliagePayload);
@@ -188,23 +195,64 @@ export class TerrainApp {
     }
   }
 
-  /** Compute active grid radius from camera pitch angle. */
-  private _getActiveGridRadius(): number {
+  /** Compute coverage mode from camera state. */
+  private _computeCoverageMode(): { mode: 'base' | 'shallow' | 'horizon'; radius: number } {
     const dir = this.controls.target.clone().sub(this.camera.position);
+    const distance = dir.length();
     dir.normalize();
-    const pitchDeg = Math.asin(Math.max(-1, Math.min(1, dir.y))) * (180 / Math.PI);
-    return Math.abs(pitchDeg) < SHALLOW_PITCH_THRESHOLD ? MAX_GRID_RADIUS : BASE_GRID_RADIUS;
+    const absPitch = Math.abs(Math.asin(Math.max(-1, Math.min(1, dir.y))) * (180 / Math.PI));
+    const heightAboveTarget = this.camera.position.y - this.controls.target.y;
+
+    // Horizon mode: very shallow + far/high
+    if (absPitch < HORIZON_PITCH_THRESHOLD &&
+        (distance > HORIZON_DISTANCE_THRESHOLD || heightAboveTarget > HORIZON_HEIGHT_THRESHOLD)) {
+      return { mode: 'horizon', radius: HORIZON_GRID_RADIUS };
+    }
+    // Shallow mode: moderately shallow
+    if (absPitch < SHALLOW_PITCH_THRESHOLD) {
+      return { mode: 'shallow', radius: SHALLOW_GRID_RADIUS };
+    }
+    return { mode: 'base', radius: BASE_GRID_RADIUS };
   }
 
-  /** Show/hide outer ring slots based on active radius. */
+  /** Show/hide slots based on coverage mode + forward-biased horizon ring. */
   private _updateSlotVisibility(): void {
+    // Compute forward direction in XZ plane for horizon bias
+    const dir = this.controls.target.clone().sub(this.camera.position);
+    dir.y = 0;
+    const dirLen = dir.length();
+    if (dirLen > 1e-6) dir.divideScalar(dirLen);
+
     for (const slot of this.slots) {
       const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
-      const visible = d <= this._activeRadius;
-      slot.mesh.visible = visible;
-      slot.foliage.grass.visible = visible;
-      slot.foliage.rock.visible = visible;
-      slot.foliage.shrub.visible = visible;
+
+      if (d <= SHALLOW_GRID_RADIUS) {
+        // Rings 0-3: visible if within active radius
+        const visible = d <= this._activeRadius;
+        slot.mesh.visible = visible;
+        slot.foliage.grass.visible = visible;
+        slot.foliage.rock.visible = visible;
+        slot.foliage.shrub.visible = visible;
+      } else {
+        // Horizon ring (d=4): forward-biased visibility
+        if (this._coverageMode !== 'horizon') {
+          slot.mesh.visible = false;
+          slot.foliage.grass.visible = false;
+          slot.foliage.rock.visible = false;
+          slot.foliage.shrub.visible = false;
+        } else {
+          // Compute dot product of camera forward XZ vs chunk direction XZ
+          const toChunkX = slot.dx;
+          const toChunkZ = slot.dz;
+          const toChunkLen = Math.sqrt(toChunkX * toChunkX + toChunkZ * toChunkZ) || 1;
+          const forwardDot = (dir.x * toChunkX + dir.z * toChunkZ) / toChunkLen;
+          const visible = forwardDot > HORIZON_FORWARD_DOT;
+          slot.mesh.visible = visible;
+          slot.foliage.grass.visible = visible;
+          slot.foliage.rock.visible = visible;
+          slot.foliage.shrub.visible = visible;
+        }
+      }
     }
   }
 
@@ -216,10 +264,14 @@ export class TerrainApp {
     this._applyMovement(dt);
     this.controls.update();
 
-    // Angle-aware outer ring activation
-    const newRadius = this._getActiveGridRadius();
-    if (newRadius !== this._activeRadius) {
-      this._activeRadius = newRadius;
+    // Coverage mode check — updates visibility when mode or direction changes
+    const { mode, radius } = this._computeCoverageMode();
+    if (mode !== this._coverageMode || radius !== this._activeRadius) {
+      this._coverageMode = mode;
+      this._activeRadius = radius;
+      this._updateSlotVisibility();
+    } else if (mode === 'horizon') {
+      // In horizon mode, forward direction may change each frame
       this._updateSlotVisibility();
     }
 
@@ -282,6 +334,7 @@ export class TerrainApp {
         slotCount: this.slots.length,
         activeRadius: this._activeRadius,
         activeSlots: this.slots.filter(s => s.mesh.visible).length,
+        coverageMode: this._coverageMode,
       },
       app: {
         rendererMode: this.rendererMode,

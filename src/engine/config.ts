@@ -20,11 +20,21 @@ export const LOD_NEAR: LodLevel      = { segments: 128, displacement: true };
 export const LOD_MID: LodLevel       = { segments: 64,  displacement: true };
 export const LOD_FAR: LodLevel       = { segments: 32,  displacement: false };
 export const LOD_ULTRA_FAR: LodLevel = { segments: 16,  displacement: false };
+export const LOD_HORIZON: LodLevel   = { segments: 8,   displacement: false };
 
 export const BASE_GRID_RADIUS = 2;
-export const MAX_GRID_RADIUS = 3;
-/** Pitch threshold (degrees) — below this, outer ring activates */
+export const SHALLOW_GRID_RADIUS = 3;
+export const HORIZON_GRID_RADIUS = 4;
+/** Pitch threshold (degrees) — below this, outer rings activate */
 export const SHALLOW_PITCH_THRESHOLD = 30;
+/** Tighter pitch threshold for horizon mode */
+export const HORIZON_PITCH_THRESHOLD = 25;
+/** Orbit distance threshold for horizon mode */
+export const HORIZON_DISTANCE_THRESHOLD = 95;
+/** Camera height-above-target threshold for horizon mode */
+export const HORIZON_HEIGHT_THRESHOLD = 25;
+/** Forward-dot cutoff for horizon ring chunks (> this → visible) */
+export const HORIZON_FORWARD_DOT = -0.15;
 
 export const GRASS_PER_CHUNK = 600;
 export const ROCK_PER_CHUNK = 80;
