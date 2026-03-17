@@ -121,7 +121,8 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
     const half = CHUNK_SIZE / 2;
     let gi = 0, ri = 0, si = 0;
 
-    const step = 1.6;
+    // Tighter scatter step for more candidates (1.3 vs 1.6)
+    const step = 1.3;
     const seed = cx * 7919 + cz * 104729;
 
     for (let lz = -half + 1; lz < half - 1; lz += step) {
@@ -163,9 +164,9 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
         const depositionDamp = Math.max(0.2, 1 - deposition * 3);
         const wGrass = flatness * Math.max(0, Math.min(1, (bn - 0.25) / 0.35))
                      * snowMask * (fields ? grassAlt : 1) * depositionDamp;
-        if (prob < wGrass * 0.5 && gi < GRASS_PER_CHUNK) {
+        if (prob < wGrass * 0.6 && gi < GRASS_PER_CHUNK) {
           _dummy.position.set(px - originX, h, pz - originZ);
-          const sc = 0.7 + placeHash(px * 3.1, pz * 5.7) * 0.8;
+          const sc = 0.8 + placeHash(px * 3.1, pz * 5.7) * 0.9;
           _dummy.scale.set(sc, sc + placeHash(px * 11.3, pz * 2.1) * 0.5, sc);
           _dummy.rotation.y = placeHash(px * 7.7, pz * 13.3) * Math.PI * 2;
           _dummy.updateMatrix();
@@ -175,14 +176,17 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
         // ── Rock: steep slopes, high altitude, or depositional debris zones ──
         const wRockSlope = Math.min(1, slope * 2);
         const wRockAlt = fields ? Math.max(0, (altitude - 0.5) * 1.5) : 0;
-        const wRockDeposition = deposition * 2; // debris in fan/apron areas
-        const wRock = Math.min(1, wRockSlope + wRockAlt * 0.3 + wRockDeposition * 0.4);
-        if (prob > 0.82 && wRock > 0.2 && ri < ROCK_PER_CHUNK) {
+        const wRockDeposition = deposition * 3; // strong debris bias in fan/apron areas
+        const wRock = Math.min(1, wRockSlope + wRockAlt * 0.3 + wRockDeposition * 0.5);
+        // Lower threshold in depositional zones for clustering
+        const rockThreshold = 0.75 - deposition * 0.3;
+        if (prob > rockThreshold && wRock > 0.15 && ri < ROCK_PER_CHUNK) {
           _dummy.position.set(px - originX, h - 0.05, pz - originZ);
-          // Bigger rocks in depositional zones
-          const depScale = 1 + deposition * 1.5;
-          const sc = (0.4 + placeHash(px * 17.3, pz * 23.1) * 1.2) * depScale;
-          _dummy.scale.set(sc, sc * 0.6, sc);
+          // Larger rocks overall, even bigger in depositional zones
+          const depScale = 1 + deposition * 2.5;
+          const baseScale = 0.5 + placeHash(px * 17.3, pz * 23.1) * 1.5;
+          const sc = baseScale * depScale;
+          _dummy.scale.set(sc, sc * 0.55, sc);
           _dummy.rotation.set(
             placeHash(px * 2.3, pz * 9.1) * 0.3,
             placeHash(px * 5.1, pz * 3.7) * Math.PI * 2,

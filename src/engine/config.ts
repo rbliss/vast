@@ -36,9 +36,9 @@ export const HORIZON_HEIGHT_THRESHOLD = 25;
 /** Forward-dot cutoff for horizon ring chunks (> this → visible) */
 export const HORIZON_FORWARD_DOT = -0.15;
 
-export const GRASS_PER_CHUNK = 600;
-export const ROCK_PER_CHUNK = 80;
-export const SHRUB_PER_CHUNK = 120;
+export const GRASS_PER_CHUNK = 800;
+export const ROCK_PER_CHUNK = 200;
+export const SHRUB_PER_CHUNK = 150;
 
 // Foliage IBL (terrain IBL is in materials/terrain/featureModel.ts)
 export const FOLIAGE_ENV_INTENSITY = 0.03;
