@@ -269,9 +269,10 @@ shell.addEventListener('set-material', ((e: CustomEvent) => {
   projectStore.markDirty();
 }) as EventListener);
 
-// ── Inspector scatter changes (Class B — apply/document) ──
+// ── Inspector scatter changes (Apply — rebuilds foliage) ──
 shell.addEventListener('set-scatter', ((e: CustomEvent) => {
   Object.assign(worldDoc.scatter, e.detail);
+  app.applyScatterParams(worldDoc.scatter);
   projectStore.markDirty();
 }) as EventListener);
 
@@ -389,6 +390,7 @@ projectStore.subscribe(() => {
 app.setSunDirection(worldDoc.scene.sun.azimuth, worldDoc.scene.sun.elevation);
 app.setExposure(worldDoc.scene.exposure);
 app.setMaterialParams(worldDoc.materials);
+app.applyScatterParams(worldDoc.scatter);
 if (!worldDoc.scene.ibl) app.setIblEnabled(false);
 if (worldDoc.scene.presentation) {
   app.setPresentationMode(true).then(syncToolbar);

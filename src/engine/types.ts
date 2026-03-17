@@ -7,6 +7,7 @@ import type { DprController } from './controls/dprController';
 import type { LodLevel } from './config';
 import type { TerrainSource } from './terrain/terrainSource';
 import type { FieldTextures } from './terrain/fieldTextures';
+import type { ScatterParams } from './foliage/foliageSystem';
 
 export interface TerrainAppOptions {
   debug?: boolean;
@@ -78,7 +79,7 @@ export interface FoliagePayload {
 
 export interface FoliageSystem {
   createInstances: () => FoliagePayload;
-  rebuild: (foliage: FoliagePayload, cx: number, cz: number, isFar: boolean, terrain: TerrainSource, fields?: FieldTextures | null) => void;
+  rebuild: (foliage: FoliagePayload, cx: number, cz: number, isFar: boolean, terrain: TerrainSource, fields?: FieldTextures | null, scatter?: ScatterParams) => void;
 }
 
 /** Snapshot API response shape. */

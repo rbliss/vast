@@ -20,6 +20,22 @@ import type { FieldTextures } from '../terrain/fieldTextures';
 import type { FoliagePayload, FoliageSystem } from '../types';
 import { makeRockVariants } from './rockGeometry';
 
+export interface ScatterParams {
+  grassDensity: number;
+  shrubDensity: number;
+  rockDensity: number;
+  alpineCutoff: number;
+  debrisEmphasis: number;
+}
+
+export const DEFAULT_SCATTER_PARAMS: ScatterParams = {
+  grassDensity: 1.0,
+  shrubDensity: 1.0,
+  rockDensity: 1.0,
+  alpineCutoff: 0.78,
+  debrisEmphasis: 1.0,
+};
+
 function placeHash(x: number, y: number): number {
   let h = x * 374761393 + y * 668265263;
   h = (h ^ (h >> 13)) * 1274126177;
@@ -108,7 +124,9 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
     isFar: boolean,
     terrain: TerrainSource,
     fields?: FieldTextures | null,
+    scatter?: ScatterParams,
   ): void {
+    const sp = scatter ?? DEFAULT_SCATTER_PARAMS;
     if (isFar) {
       foliage.grass.count = 0;
       foliage.rock.count = 0;
@@ -151,8 +169,8 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
           deposition = f.deposition;
         }
 
-        // Snow line: no vegetation above ~78% normalized altitude
-        const snowMask = Math.max(0, 1 - Math.max(0, (altitude - 0.72) / 0.12));
+        // Snow line: no vegetation above alpine cutoff
+        const snowMask = Math.max(0, 1 - Math.max(0, (altitude - (sp.alpineCutoff - 0.06)) / 0.12));
 
         // Biome noise
         const bn = placeHash(Math.floor(px * 0.03) + 0.5, Math.floor(pz * 0.03) + 0.5);
@@ -164,7 +182,7 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
         const depositionDamp = Math.max(0.2, 1 - deposition * 3);
         const wGrass = flatness * Math.max(0, Math.min(1, (bn - 0.25) / 0.35))
                      * snowMask * (fields ? grassAlt : 1) * depositionDamp;
-        if (prob < wGrass * 0.6 && gi < GRASS_PER_CHUNK) {
+        if (prob < wGrass * 0.6 * sp.grassDensity && gi < GRASS_PER_CHUNK) {
           _dummy.position.set(px - originX, h, pz - originZ);
           const sc = 0.8 + placeHash(px * 3.1, pz * 5.7) * 0.9;
           _dummy.scale.set(sc, sc + placeHash(px * 11.3, pz * 2.1) * 0.5, sc);
@@ -176,11 +194,10 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
         // ── Rock: steep slopes, high altitude, or depositional debris zones ──
         const wRockSlope = Math.min(1, slope * 2);
         const wRockAlt = fields ? Math.max(0, (altitude - 0.5) * 1.5) : 0;
-        const wRockDeposition = deposition * 3; // strong debris bias in fan/apron areas
+        const wRockDeposition = deposition * 3 * sp.debrisEmphasis;
         const wRock = Math.min(1, wRockSlope + wRockAlt * 0.3 + wRockDeposition * 0.5);
-        // Lower threshold in depositional zones for clustering
-        const rockThreshold = 0.75 - deposition * 0.3;
-        if (prob > rockThreshold && wRock > 0.15 && ri < ROCK_PER_CHUNK) {
+        const rockThreshold = 0.75 - deposition * 0.3 * sp.debrisEmphasis;
+        if (prob > rockThreshold && wRock > 0.15 && ri < ROCK_PER_CHUNK && sp.rockDensity > 0) {
           _dummy.position.set(px - originX, h - 0.05, pz - originZ);
           // Larger rocks overall, even bigger in depositional zones
           const depScale = 1 + deposition * 2.5;
@@ -199,7 +216,7 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
         // ── Shrub: transition zones, below snow, low deposition ──
         const wShrub = flatness * Math.max(0, 1 - Math.abs(bn - 0.45) * 4)
                       * snowMask * depositionDamp;
-        if (prob > 0.7 && prob < 0.85 && wShrub > 0.2 && si < SHRUB_PER_CHUNK) {
+        if (prob > (0.85 - 0.15 * sp.shrubDensity) && prob < 0.85 && wShrub > 0.2 && si < SHRUB_PER_CHUNK) {
           _dummy.position.set(px - originX, h, pz - originZ);
           const sc = 0.5 + placeHash(px * 19.7, pz * 31.3) * 0.7;
           _dummy.scale.set(sc, sc * 1.2, sc);

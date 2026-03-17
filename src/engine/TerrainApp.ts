@@ -11,6 +11,7 @@ import type { DprController } from './controls/dprController';
 import type { RendererBackend, RendererLike } from './backend/types';
 import type { TerrainSource } from './terrain/terrainSource';
 import type { TerrainSourceResult } from './terrain/terrainSource';
+import type { ScatterParams } from './foliage/foliageSystem';
 import type { WorldDocument } from './document';
 import type { TerrainBakeArtifacts } from './bake/types';
 import type { TerrainDomainConfig } from './bake/terrainDomain';
@@ -418,6 +419,25 @@ export class TerrainApp {
     if (this._clouds) this._clouds.setCoverage(coverage);
   }
 
+  // ── Scatter controls (Apply — rebuilds foliage) ──
+
+  private _scatterParams: ScatterParams | undefined;
+
+  applyScatterParams(params: ScatterParams): void {
+    this._scatterParams = params;
+    // Rebuild foliage for all visible near-ring chunks
+    for (const slot of this.slots) {
+      const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
+      if (d < BASE_GRID_RADIUS && slot.mesh.visible) {
+        this.foliage.rebuild(
+          slot.foliage, slot.cx, slot.cz,
+          false, this.terrain, this._fieldTextures,
+          this._scatterParams,
+        );
+      }
+    }
+  }
+
   // ── Material parameter controls (Live) ──
 
   setMaterialParams(params: { snowThreshold?: number; rockSlopeMin?: number; rockSlopeMax?: number; sedimentEmphasis?: number }): void {
@@ -470,7 +490,7 @@ export class TerrainApp {
     for (const slot of this.slots) {
       if (rebuildChunkSlot(slot, this.centerCX, this.centerCZ, this.terrain)) {
         const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
-        this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= BASE_GRID_RADIUS, this.terrain, this._fieldTextures);
+        this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= BASE_GRID_RADIUS, this.terrain, this._fieldTextures, this._scatterParams);
         // Recompute overlay for rebuilt slots
         if (this._overlayMode !== 'none' && slot.mesh.visible) {
           applyDebugOverlay(slot, this.terrain, this._overlayMode);
