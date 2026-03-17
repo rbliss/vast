@@ -8,5 +8,6 @@ declare global {
     __controls?: OrbitControls;
     __camera?: PerspectiveCamera;
     __scene?: Scene;
+    __snapshot?: () => Promise<void>;
   }
 }

@@ -11,6 +11,7 @@ import {
   texture, uniform, mix, smoothstep, abs, pow, normalize,
   min, floor, fract, dot, sign,
   positionWorld, positionLocal, normalWorld, normalLocal,
+  normalView, cameraViewMatrix,
 } from 'three/tsl';
 
 import { CHUNK_SIZE, ROCK_WORLD_SIZE, GRASS_WORLD_SIZE, DIRT_WORLD_SIZE } from '../config';
@@ -21,7 +22,7 @@ import {
   GRASS_NOISE_MIN, GRASS_NOISE_MAX, DIRT_NOISE_MIN, DIRT_NOISE_MAX,
   DIRT_WEIGHT_SCALE, TRIPLANAR_SHARPNESS,
   DISPLACEMENT_SCALE, DISPLACEMENT_BIAS, DISPLACEMENT_FADE_DISTANCE,
-  TERRAIN_ENV_MAP_INTENSITY,
+  ROCK_NORMAL_SCALE, TERRAIN_ENV_MAP_INTENSITY,
 } from './terrain/featureModel';
 
 // ── Pure expression helpers ──
@@ -65,20 +66,27 @@ const biomeWeights = Fn(([wPos, wNorm]: [any, any]) => {
 });
 
 // Rock tri-planar normal with Whiteout blending (Golus method)
+// Matches WebGL path: normal scale + axis-sign correction + world-space output
 const triplanarRockNormal = Fn(([tex, wPos, wNorm, scale]: [any, any, any, any]) => {
-  const as = sign(wNorm);
+  const axisSign = sign(wNorm);
   const w = pow(abs(wNorm), vec3(TRIPLANAR_SHARPNESS));
   const ws = w.div(w.x.add(w.y).add(w.z).add(1e-6));
+  const ns = float(ROCK_NORMAL_SCALE);
 
   // Sample normal maps on each axis
   const tnX = texture(tex, wPos.zy.mul(scale)).xyz.mul(2).sub(1);
   const tnY = texture(tex, wPos.xz.mul(scale)).xyz.mul(2).sub(1);
   const tnZ = texture(tex, wPos.xy.mul(scale)).xyz.mul(2).sub(1);
 
+  // Apply normal scale to XY + axis-sign correction (matching WebGL path)
+  const tnXc = vec3(tnX.x.mul(ns).mul(axisSign.x), tnX.y.mul(ns), tnX.z);
+  const tnYc = vec3(tnY.x.mul(ns).mul(axisSign.y), tnY.y.mul(ns), tnY.z);
+  const tnZc = vec3(tnZ.x.mul(ns).mul(axisSign.z).negate(), tnZ.y.mul(ns), tnZ.z);
+
   // Whiteout blending: swizzle world normal into tangent frame
-  const blendX = vec3(tnX.xy.add(wNorm.zy), abs(wNorm.x));
-  const blendY = vec3(tnY.xy.add(wNorm.xz), abs(wNorm.y));
-  const blendZ = vec3(tnZ.xy.add(wNorm.xy), abs(wNorm.z));
+  const blendX = vec3(tnXc.xy.add(wNorm.zy), abs(wNorm.x));
+  const blendY = vec3(tnYc.xy.add(wNorm.xz), abs(wNorm.y));
+  const blendZ = vec3(tnZc.xy.add(wNorm.xy), abs(wNorm.z));
 
   // Swizzle back to world space and blend
   return normalize(
@@ -122,14 +130,16 @@ export function createNodeTerrainMaterials(textures: TextureSet): TerrainMateria
     // ── Metalness ──
     mat.metalnessNode = float(0);
 
-    // ── Normal: rock tri-planar, flat stays geometry ──
+    // ── Normal: rock tri-planar in world space → view space ──
     mat.normalNode = Fn(() => {
       const wp = positionWorld;
       const wn = normalWorld;
       const bw = biomeWeights(wp, wn);
-      const rockNrm = triplanarRockNormal(textures.rockNorm, wp, wn, rk);
-      // Mix: flat areas keep geometry normal, steep areas get rock normal
-      return normalize(mix(wn, rockNrm, bw.x));
+      const rockNrmWorld = triplanarRockNormal(textures.rockNorm, wp, wn, rk);
+      // Transform world-space rock normal to view space (normalNode expects view space)
+      const rockNrmView = normalize(cameraViewMatrix.mul(vec4(rockNrmWorld, 0)).xyz);
+      // Mix: flat areas keep geometry normal, steep areas get rock normal (both view space)
+      return normalize(mix(normalView, rockNrmView, bw.x));
     })();
 
     // ── AO: rock gets AO, grass/dirt → 1.0 ──

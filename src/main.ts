@@ -48,7 +48,7 @@ const app = await TerrainApp.createAsync(document.body, {
 // ── Wire UI ──
 const dprBtns = createDprButtons(mustEl('dprRow'), app.dpr);
 
-createScreenshotUi(
+const snapshotUi = createScreenshotUi(
   mustEl<HTMLButtonElement>('screenshotBtn'),
   mustEl('shotStatus'),
   {
@@ -60,6 +60,9 @@ createScreenshotUi(
     getSnapshotState: () => app.getSnapshotState(),
   },
 );
+
+// Expose snapshot API globally for automation / browser console
+window.__snapshot = snapshotUi.take;
 
 const hud = createHud(mustEl('fps'), {
   reversedDepth: app.reversedDepthSupported,
