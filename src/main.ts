@@ -15,7 +15,15 @@ import { createDprButtons } from './ui/dprButtons';
 const params = new URLSearchParams(location.search);
 const debugMode = params.has('debug');
 const dprParam = params.get('dpr');
-const rendererMode = params.get('renderer') === 'webgpu' ? 'webgpu' as const : 'webgl' as const;
+
+// Renderer selection: explicit param > localStorage > default (webgpu-first)
+const rendererParam = params.get('renderer');
+let rendererMode: 'webgl' | 'webgpu';
+if (rendererParam === 'webgl' || rendererParam === 'webgpu') {
+  rendererMode = rendererParam;
+} else {
+  rendererMode = localStorage.getItem('terrain-renderer') as 'webgl' | 'webgpu' || 'webgpu';
+}
 let dprMode: 'fixed' | 'auto' = 'fixed';
 let dprInitial = 2;
 if (dprParam === 'auto') {
@@ -75,6 +83,35 @@ iblBtn.addEventListener('click', () => {
   updateIblButton();
 });
 updateIblButton();
+
+// ── Renderer toggle (reload-based) ──
+const rendererRow = mustEl('rendererRow');
+const rendererButtons = rendererRow.querySelectorAll<HTMLButtonElement>('button[data-renderer]');
+
+// Show fallback notice if WebGPU was requested but unavailable
+if (rendererMode === 'webgpu' && app.rendererMode === 'webgl') {
+  const notice = document.createElement('span');
+  notice.style.cssText = 'color:#fbbf24;font:10px/1 monospace;margin-left:4px';
+  notice.textContent = '(WebGPU unavailable)';
+  rendererRow.appendChild(notice);
+}
+
+// Highlight active renderer
+rendererButtons.forEach(btn => {
+  btn.classList.toggle('active', btn.dataset.renderer === app.rendererMode);
+});
+
+// Save preference + reload on click
+rendererButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.renderer as 'webgl' | 'webgpu';
+    if (target === app.rendererMode) return;
+    localStorage.setItem('terrain-renderer', target);
+    const p = new URLSearchParams(location.search);
+    p.set('renderer', target);
+    location.search = p.toString();
+  });
+});
 
 // ── Resize ──
 window.addEventListener('resize', () => {
