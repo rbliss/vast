@@ -30,8 +30,10 @@ export const DEFAULT_PRESENTATION: PresentationConfig = {
 };
 
 export interface PresentationPipeline {
-  /** Render a frame through the post-processing pipeline */
+  /** Render a frame through the post-processing pipeline (fire-and-forget for interactive) */
   render(scene: Scene, camera: PerspectiveCamera): void;
+  /** Render and await completion (for deterministic capture) */
+  renderAndWait(scene: Scene, camera: PerspectiveCamera): Promise<void>;
   /** Update bloom parameters */
   setBloom(strength: number, radius: number, threshold: number): void;
   /** Whether the pipeline is active */
@@ -83,15 +85,24 @@ export async function createPresentationPipeline(
     active: true,
 
     render(scene: Scene, camera: PerspectiveCamera) {
-      // Rebuild pipeline if scene/camera changed or not yet built
       if (!pipeline || scene !== currentScene || camera !== currentCamera) {
         buildPipeline(scene, camera);
       }
-
       try {
         pipeline.renderAsync();
       } catch (e) {
-        // Fallback to direct rendering if pipeline fails
+        console.warn('[postprocess] pipeline error, falling back to direct render:', e);
+        renderer.render(scene, camera);
+      }
+    },
+
+    async renderAndWait(scene: Scene, camera: PerspectiveCamera) {
+      if (!pipeline || scene !== currentScene || camera !== currentCamera) {
+        buildPipeline(scene, camera);
+      }
+      try {
+        await pipeline.renderAsync();
+      } catch (e) {
         console.warn('[postprocess] pipeline error, falling back to direct render:', e);
         renderer.render(scene, camera);
       }

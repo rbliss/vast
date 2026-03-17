@@ -502,12 +502,12 @@ export class TerrainApp {
     this.renderer.setSize(w, h);
   }
 
-  captureFrame(): string {
+  async captureFrame(): Promise<string> {
     this.controls.update();
     this.updateChunks();
-    // Render through presentation pipeline if active, then capture
+    // Render through presentation pipeline if active, awaiting completion
     if (this._presentationMode && this._presentationPipeline) {
-      this._presentationPipeline.render(this.scene, this.camera);
+      await this._presentationPipeline.renderAndWait(this.scene, this.camera);
     } else {
       this.renderer.render(this.scene, this.camera);
     }

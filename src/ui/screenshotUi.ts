@@ -7,7 +7,7 @@ import { getRecentErrors } from '../utils/runtimeErrors';
 
 interface ScreenshotOpts {
   getLabel: () => string;
-  captureFrame: () => string;
+  captureFrame: () => string | Promise<string>;
   /** Engine snapshot state provider */
   getSnapshotState?: () => Record<string, unknown>;
 }
@@ -42,8 +42,8 @@ export function createScreenshotUi(
     btnEl.disabled = true;
     setStatus('Capturing...');
     try {
-      // Capture frame image
-      const image = captureFrame();
+      // Capture frame image (may be async in presentation mode)
+      const image = await captureFrame();
       const label = getLabel();
 
       // Gather snapshot metadata
