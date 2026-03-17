@@ -334,10 +334,16 @@ function transportAndDeposit(
  * This produces hierarchical channels because cells with larger
  * drainage areas (more upstream catchment) erode faster.
  */
+export interface StreamPowerResult {
+  area: Float32Array;
+  receiver: Int32Array;
+  slopes: Float32Array;
+}
+
 export function streamPowerErosion(
   grid: Float32Array, w: number, h: number,
   cellSize: number, params: StreamPowerParams,
-): void {
+): StreamPowerResult {
   const { iterations, erosionK, areaExponent, slopeExponent, dt,
           diffusionRate, minSlope, upliftRate, maxErosion,
           depositionEnabled, sedimentFraction, transportK,
@@ -347,12 +353,20 @@ export function streamPowerErosion(
   // Sediment flux: how much sediment is being carried through each cell
   const sedimentFlux = depositionEnabled ? new Float32Array(n) : null;
 
+  let lastArea: Float32Array = new Float32Array(n);
+  let lastReceiver: Int32Array = new Int32Array(n);
+  let lastSlopes: Float32Array = new Float32Array(n);
+
   for (let iter = 0; iter < iterations; iter++) {
     // Step 1: Flow accumulation + receiver graph
-    const { area, receiver } = computeFlowAccumulation(grid, w, h, cellSize);
+    const flowResult = computeFlowAccumulation(grid, w, h, cellSize);
+    const { area, receiver } = flowResult;
+    lastArea = area as Float32Array;
+    lastReceiver = receiver as Int32Array;
 
     // Step 2: Slopes
     const slopes = computeSlopes(grid, w, h, cellSize);
+    lastSlopes = slopes as Float32Array;
 
     // Step 3: Stream-power incision + sediment production
     if (sedimentFlux) sedimentFlux.fill(0);
@@ -400,4 +414,6 @@ export function streamPowerErosion(
       if (grid[i] < 0) grid[i] = 0;
     }
   }
+
+  return { area: lastArea, receiver: lastReceiver, slopes: lastSlopes };
 }

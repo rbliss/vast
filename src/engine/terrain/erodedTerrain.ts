@@ -22,6 +22,7 @@
 import type { TerrainSource } from './terrainSource';
 import { thermalErosion, hydraulicErosion, type ThermalParams, type HydraulicParams } from './erosion';
 import { streamPowerErosion, type StreamPowerParams, DEFAULT_STREAM_POWER } from './streamPower';
+import { applyFanDeposition, type FanParams, DEFAULT_FAN_PARAMS } from './fanDeposition';
 
 export interface ErosionConfig {
   /** Grid resolution (gridSize x gridSize cells) */
@@ -34,6 +35,8 @@ export interface ErosionConfig {
   thermal: ThermalParams & { enabled: boolean };
   /** Droplet hydraulic erosion (optional fine detail, runs last) */
   hydraulic: HydraulicParams & { enabled: boolean };
+  /** Fan and debris-flow deposition (runs after stream-power) */
+  fan: FanParams & { enabled: boolean };
 }
 
 export const DEFAULT_EROSION: ErosionConfig = {
@@ -62,6 +65,10 @@ export const DEFAULT_EROSION: ErosionConfig = {
     gravity: 8.0,
     erosionRadius: 2,
     seed: 42,
+  },
+  fan: {
+    enabled: true,
+    ...DEFAULT_FAN_PARAMS,
   },
 };
 
@@ -98,10 +105,21 @@ export class ErodedTerrainSource implements TerrainSource {
     }
 
     // Step 2: Stream-power erosion (primary — creates hierarchical channels)
+    let spResult: { area: Float32Array; receiver: Int32Array; slopes: Float32Array } | null = null;
     if (config.streamPower.enabled) {
       const spT0 = performance.now();
-      streamPowerErosion(this._grid, n, n, this._cellSize, config.streamPower);
+      spResult = streamPowerErosion(this._grid, n, n, this._cellSize, config.streamPower);
       console.log(`[erosion] stream-power: ${config.streamPower.iterations} iterations (${(performance.now() - spT0).toFixed(0)}ms)`);
+    }
+
+    // Step 2b: Fan and debris-flow deposition (uses flow data from stream-power)
+    if (config.fan.enabled && spResult) {
+      const fanT0 = performance.now();
+      applyFanDeposition(
+        this._grid, spResult.area, spResult.receiver, spResult.slopes,
+        n, n, this._cellSize, config.fan,
+      );
+      console.log(`[erosion] fan deposition (${(performance.now() - fanT0).toFixed(0)}ms)`);
     }
 
     // Step 3: Thermal relaxation (stabilize oversteepened slopes)
