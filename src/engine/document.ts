@@ -105,6 +105,44 @@ export type WorldDocument = WorldDocumentV1;
 
 // ── Defaults ──
 
+export function createBlankCanvasDocument(): WorldDocument {
+  const now = new Date().toISOString();
+  return {
+    schema: 'vast-world',
+    version: 1,
+    meta: { name: 'Blank Canvas', created: now, modified: now },
+    terrain: {
+      type: 'legacyProcedural' as const, // Will be overridden to editable
+      heightScale: 1,
+      preset: '',
+      bakeExtent: 200,
+      bakeGridSize: 256,
+      erosion: { streamPowerIterations: 0, erosionStrength: 0, diffusionStrength: 0, fanStrength: 0, thermalIterations: 0 },
+    },
+    materials: { snowThreshold: 1, rockSlopeMin: 0.25, rockSlopeMax: 0.55, sedimentEmphasis: 0 },
+    scatter: { grassDensity: 0, shrubDensity: 0, rockDensity: 0, alpineCutoff: 1, debrisEmphasis: 0 },
+    scene: {
+      camera: { position: [100, 60, 100], target: [0, 0, 0], fov: 55 },
+      sun: { azimuth: 210, elevation: 35 },
+      exposure: 1.0,
+      waterLevel: null,
+      cloudCoverage: 0,
+      ibl: true,
+      presentation: false,
+      dpr: { mode: 'fixed', initial: 2 },
+    },
+    layers: [],
+  };
+}
+
+export function createTestEnvironmentDocument(): WorldDocument {
+  const doc = createDefaultDocument();
+  doc.meta.name = 'Test Environment';
+  doc.terrain.type = 'macro';
+  doc.terrain.preset = 'chain';
+  return doc;
+}
+
 export function createDefaultDocument(): WorldDocument {
   const now = new Date().toISOString();
   return {

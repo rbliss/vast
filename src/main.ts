@@ -15,7 +15,7 @@ import { TerrainApp } from './engine/TerrainApp';
 import { mustEl } from './engine/types';
 import { createHud } from './ui/hud';
 import { createScreenshotUi } from './ui/screenshotUi';
-import { createDefaultDocument, type WorldDocument } from './engine/document';
+import { createDefaultDocument, createBlankCanvasDocument, createTestEnvironmentDocument, type WorldDocument } from './engine/document';
 import { createTerrainSource } from './engine/terrain/terrainSource';
 import {
   autosave, loadAutosave,
@@ -52,16 +52,16 @@ function setStartupStatus(msg: string) {
   if (startupEl) startupEl.textContent = msg;
 }
 
-// ── Create or restore world document ──
-setStartupStatus('Checking for saved draft...');
+// ── Create document: blank canvas by default, test env via ?testenv or ?preset ──
+const isTestEnv = params.has('testenv') || params.has('preset');
 let worldDoc: WorldDocument;
-const savedDraft = await loadAutosave();
-if (savedDraft && !params.has('preset')) {
-  worldDoc = savedDraft;
-  setStartupStatus('Restored autosaved draft');
-  console.log('[startup] restored autosaved draft');
+
+if (isTestEnv) {
+  setStartupStatus('Loading test environment...');
+  worldDoc = createTestEnvironmentDocument();
 } else {
-  worldDoc = createDefaultDocument();
+  setStartupStatus('Starting blank canvas...');
+  worldDoc = createBlankCanvasDocument();
 }
 worldDoc.scene.dpr.mode = dprMode;
 worldDoc.scene.dpr.initial = dprInitial;
@@ -86,24 +86,40 @@ if (params.has('present')) worldDoc.scene.presentation = true;
 if (params.get('ibl') === 'off') worldDoc.scene.ibl = false;
 if (params.get('clay') !== null) { /* clay is viewport-only, not document state */ }
 
-setStartupStatus('Checking cache...');
+// ── Terrain source: blank canvas (fast) or baked (test environment) ──
+let terrainSource: import('./engine/terrain/terrainSource').TerrainSource;
+let bakeArtifacts: import('./engine/bake/types').TerrainBakeArtifacts | null = null;
+let terrainDomain: import('./engine/bake/terrainDomain').TerrainDomainConfig;
 
-const { source: terrainSource, bakeArtifacts, domain: terrainDomain } = await createTerrainSource(worldDoc, (progress) => {
-  const elapsed = `${Math.round(progress.elapsedMs / 100) / 10}s`;
-  if (progress.stage === 'cache-hit') {
-    setStartupStatus('Cache hit — loading terrain...');
-  } else {
-    const stageLabels: Record<string, string> = {
-      'sampling': 'Sampling terrain',
-      'stream-power': 'Eroding channels',
-      'fan-deposition': 'Building fans',
-      'thermal': 'Relaxing slopes',
-      'packaging': 'Packaging results',
-    };
-    const label = stageLabels[progress.stage] || progress.stage;
-    setStartupStatus(`Baking terrain: ${label}\n${progress.stageIndex + 1}/${progress.totalStages} · ${elapsed}`);
-  }
-});
+if (isTestEnv) {
+  setStartupStatus('Checking cache...');
+  const result = await createTerrainSource(worldDoc, (progress) => {
+    const elapsed = `${Math.round(progress.elapsedMs / 100) / 10}s`;
+    if (progress.stage === 'cache-hit') {
+      setStartupStatus('Cache hit — loading terrain...');
+    } else {
+      const stageLabels: Record<string, string> = {
+        'sampling': 'Sampling terrain',
+        'stream-power': 'Eroding channels',
+        'fan-deposition': 'Building fans',
+        'thermal': 'Relaxing slopes',
+        'packaging': 'Packaging results',
+      };
+      const label = stageLabels[progress.stage] || progress.stage;
+      setStartupStatus(`Baking terrain: ${label}\n${progress.stageIndex + 1}/${progress.totalStages} · ${elapsed}`);
+    }
+  });
+  terrainSource = result.source;
+  bakeArtifacts = result.bakeArtifacts;
+  terrainDomain = result.domain;
+} else {
+  // Blank canvas: use editable heightfield (no bake)
+  const { EditableHeightfield } = await import('./engine/terrain/editableHeightfield');
+  const hf = new EditableHeightfield(256, 200);
+  terrainSource = hf;
+  const { defaultDomain } = await import('./engine/bake/terrainDomain');
+  terrainDomain = defaultDomain(200);
+}
 
 setStartupStatus('Loading app...');
 
@@ -315,6 +331,15 @@ shell.addEventListener('rebake', (async () => {
   }
 }) as EventListener);
 
+// ── Environment switching ──
+shell.addEventListener('test-environment', () => {
+  window.location.href = '/?testenv&debug';
+});
+
+shell.addEventListener('reset-canvas', () => {
+  app.resetCanvas();
+});
+
 // ── Save / Open / Autosave ──
 shell.addEventListener('save-project', (async () => {
   toolbar.saveStatus = 'Saving...';
@@ -395,10 +420,43 @@ if (!worldDoc.scene.ibl) app.setIblEnabled(false);
 if (worldDoc.scene.presentation) {
   app.setPresentationMode(true).then(syncToolbar);
 }
-// Clay mode on by default (use ?textured to disable)
-if (!params.has('textured')) {
+// Clay mode: always on for blank canvas, optional for test env
+if (!isTestEnv || !params.has('textured')) {
   app.setClayMode(true);
   viewportStore.setClayMode(true);
+}
+
+// ── Blank canvas: init editable heightfield + sculpt interaction ──
+if (!isTestEnv) {
+  app.initEditableMode(256, 200);
+
+  // Sculpt: click to raise terrain
+  let brushRadius = 15;
+  let brushStrength = 3;
+
+  viewportHost.addEventListener('click', (e: MouseEvent) => {
+    // Convert mouse to NDC
+    const rect = viewportHost.getBoundingClientRect();
+    const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    const hit = app.raycastTerrain(ndcX, ndcY);
+    if (hit) {
+      app.applyBrushStamp({ x: hit.x, z: hit.z, radius: brushRadius, strength: brushStrength });
+    }
+  });
+
+  // Undo/Redo shortcuts
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+      e.preventDefault();
+      app.undoSculpt();
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
+      e.preventDefault();
+      app.redoSculpt();
+    }
+  });
 }
 viewportStore.setSunDirection(worldDoc.scene.sun.azimuth, worldDoc.scene.sun.elevation);
 viewportStore.setExposure(worldDoc.scene.exposure);

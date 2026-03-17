@@ -75,6 +75,11 @@ export class ToolbarControls extends LitElement {
       <button @click=${() => this._emit('save-project')}>Save</button>
       <button @click=${() => this._emit('open-project')}>Open</button>
       ${this.saveStatus ? html`<span style="color:#888; font-size:10px;">${this.saveStatus}</span>` : ''}
+
+      <div class="separator"></div>
+
+      <button @click=${() => this._emit('test-environment')}>Test Environment</button>
+      <button @click=${() => this._emit('reset-canvas')}>Reset Canvas</button>
     `;
   }
 

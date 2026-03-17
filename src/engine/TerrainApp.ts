@@ -11,6 +11,7 @@ import type { DprController } from './controls/dprController';
 import type { RendererBackend, RendererLike } from './backend/types';
 import type { TerrainSource } from './terrain/terrainSource';
 import type { TerrainSourceResult } from './terrain/terrainSource';
+import { EditableHeightfield, type BrushStamp } from './terrain/editableHeightfield';
 import type { ScatterParams } from './foliage/foliageSystem';
 import type { WorldDocument } from './document';
 import type { TerrainBakeArtifacts } from './bake/types';
@@ -355,6 +356,91 @@ export class TerrainApp {
 
     // Update aerial perspective uniform
     sunWarmthUniform.value = warmth * 0.6; // damped so it's subtle
+  }
+
+  // ── Sculpt: raise terrain with brush stamps ──
+
+  private _editableHF: EditableHeightfield | null = null;
+
+  get isEditable(): boolean { return this._editableHF !== null; }
+
+  /** Initialize editable heightfield mode (blank canvas) */
+  initEditableMode(gridSize: number = 256, extent: number = 200): void {
+    this._editableHF = new EditableHeightfield(gridSize, extent);
+    this.terrain = this._editableHF;
+    // Force rebuild all chunks
+    this.centerCX = Infinity;
+    this.centerCZ = Infinity;
+    this.updateChunks();
+  }
+
+  /** Apply a brush stamp and rebuild affected chunks */
+  applyBrushStamp(stamp: BrushStamp): void {
+    if (!this._editableHF) return;
+
+    const affected = this._editableHF.applyStamp(stamp);
+
+    // Force rebuild of affected chunks by invalidating their coordinates
+    for (const slot of this.slots) {
+      const key = `${slot.cx},${slot.cz}`;
+      if (affected.has(key)) {
+        slot.cx = Infinity;
+        slot.cz = Infinity;
+      }
+    }
+    // updateChunks will detect the invalidated slots and rebuild them
+    this.updateChunks();
+  }
+
+  /** Reset canvas to flat */
+  resetCanvas(): void {
+    if (!this._editableHF) return;
+    this._editableHF.reset();
+    this.centerCX = Infinity;
+    this.centerCZ = Infinity;
+    this.updateChunks();
+  }
+
+  /** Undo last sculpt action */
+  undoSculpt(): boolean {
+    if (!this._editableHF) return false;
+    const ok = this._editableHF.undo();
+    if (ok) {
+      this.centerCX = Infinity;
+      this.centerCZ = Infinity;
+      this.updateChunks();
+    }
+    return ok;
+  }
+
+  /** Redo last undone sculpt action */
+  redoSculpt(): boolean {
+    if (!this._editableHF) return false;
+    const ok = this._editableHF.redo();
+    if (ok) {
+      this.centerCX = Infinity;
+      this.centerCZ = Infinity;
+      this.updateChunks();
+    }
+    return ok;
+  }
+
+  /** Raycast to terrain surface — returns world XZ position or null */
+  raycastTerrain(ndcX: number, ndcY: number): { x: number; z: number; y: number } | null {
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+
+    // Raycast against visible chunk meshes
+    const meshes = this.slots
+      .filter(s => s.mesh.visible)
+      .map(s => s.mesh);
+
+    const intersects = raycaster.intersectObjects(meshes);
+    if (intersects.length > 0) {
+      const p = intersects[0].point;
+      return { x: p.x, z: p.z, y: p.y };
+    }
+    return null;
   }
 
   // ── Terrain source swap (for rebake) ──
