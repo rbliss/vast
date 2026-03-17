@@ -182,14 +182,45 @@ function diffuse(
   grid.set(tmp);
 }
 
-// ── Sediment transport and deposition ──
+// ── Confinement detection ──
 
 /**
- * Route sediment downstream along D8 receivers.
- * Deposit where transport capacity (Tc = Kd * A^md * S^nd) is exceeded.
+ * Compute channel confinement at each cell.
+ * Confinement = fraction of 8-neighbors that are higher than this cell.
+ * High (near 1.0) = valley bottom. Low (near 0.0) = ridge/open terrain.
+ */
+function computeConfinement(grid: Float32Array, w: number, h: number): Float32Array {
+  const n = w * h;
+  const conf = new Float32Array(n);
+
+  for (let z = 1; z < h - 1; z++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = z * w + x;
+      const hc = grid[idx];
+      let higher = 0;
+      for (let d = 0; d < 8; d++) {
+        const ni = (z + D8_DZ[d]) * w + (x + D8_DX[d]);
+        if (grid[ni] > hc) higher++;
+      }
+      conf[idx] = higher / 8;
+    }
+  }
+
+  return conf;
+}
+
+// ── Divergent fan deposition ──
+
+/**
+ * Route sediment downstream with divergent deposition.
  *
- * Creates: fans at channel exits, aprons at mountain fronts,
- * valley fill where slope decreases.
+ * Incision routing uses D8 (single steepest receiver).
+ * Deposition uses MULTI-FLOW: when sediment exceeds transport capacity,
+ * deposit is spread across ALL lower neighbors proportionally to slope,
+ * creating fan-like spreading at channel exits and unconfined zones.
+ *
+ * Confinement detection triggers wider spreading where channels exit
+ * valleys into open terrain.
  */
 function transportAndDeposit(
   grid: Float32Array,
@@ -202,6 +233,9 @@ function transportAndDeposit(
   minSlope: number,
 ): void {
   const n = w * h;
+
+  // Compute confinement
+  const confinement = computeConfinement(grid, w, h);
 
   // Sort cells by height descending — process upstream before downstream
   const sorted = new Uint32Array(n);
@@ -220,17 +254,64 @@ function transportAndDeposit(
     const A = area[idx];
     const S = Math.max(slopes[idx], minSlope);
 
-    // Transport capacity: how much sediment this cell can carry
+    // Transport capacity
     const capacity = transportK * Math.pow(A, transportAreaExp) * Math.pow(S, transportSlopeExp);
 
     if (flux > capacity) {
-      // Over capacity: deposit the excess
-      const deposit = (flux - capacity) * 0.5; // Deposit half the excess per step
-      grid[idx] += deposit;
+      // Over capacity: deposit the excess with fan spreading
+      const excess = flux - capacity;
+      const deposit = excess * 0.5;
+      const conf = confinement[idx];
+
+      // Unconfined deposition: spread across lower neighbors
+      // Confined deposition: deposit at current cell
+      const spreadFactor = Math.max(0, 1 - conf * 1.5); // 0 = fully confined, 1 = fully open
+
+      if (spreadFactor > 0.1) {
+        // Multi-flow fan deposition
+        const hc = grid[idx];
+        let totalDrop = 0;
+        const drops: number[] = [];
+        const nIdxs: number[] = [];
+
+        for (let d = 0; d < 8; d++) {
+          const nx = x + D8_DX[d];
+          const nz = z + D8_DZ[d];
+          if (nx < 1 || nx >= w - 1 || nz < 1 || nz >= h - 1) continue;
+          const ni = nz * w + nx;
+          const drop = hc - grid[ni];
+          if (drop > 0) {
+            // Weight by drop / distance (steeper neighbors get more)
+            const weight = drop / D8_DIST[d];
+            drops.push(weight);
+            nIdxs.push(ni);
+            totalDrop += weight;
+          }
+        }
+
+        if (totalDrop > 0) {
+          const fanDeposit = deposit * spreadFactor;
+          const selfDeposit = deposit * (1 - spreadFactor);
+
+          // Deposit at self
+          grid[idx] += selfDeposit;
+
+          // Spread fan deposit to lower neighbors proportionally
+          for (let d = 0; d < drops.length; d++) {
+            grid[nIdxs[d]] += fanDeposit * (drops[d] / totalDrop);
+          }
+        } else {
+          grid[idx] += deposit;
+        }
+      } else {
+        // Confined: deposit at self
+        grid[idx] += deposit;
+      }
+
       sedimentFlux[idx] -= deposit;
     }
 
-    // Pass remaining sediment to receiver
+    // Pass remaining sediment to D8 receiver
     const recv = receiver[idx];
     if (recv >= 0) {
       sedimentFlux[recv] += sedimentFlux[idx];
