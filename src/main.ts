@@ -43,9 +43,34 @@ if (presetParam) {
   worldDoc.terrain.preset = presetParam;
 }
 
+// ── Startup status overlay ──
+const startupEl = document.getElementById('startup-status');
+const startupT0 = performance.now();
+
+function setStartupStatus(msg: string) {
+  if (startupEl) startupEl.textContent = msg;
+}
+
+setStartupStatus('Checking cache...');
+
 const { source: terrainSource, bakeArtifacts, domain: terrainDomain } = await createTerrainSource(worldDoc, (progress) => {
-  console.log(`[startup] bake: ${progress.stage} (${progress.stageIndex + 1}/${progress.totalStages}, ${Math.round(progress.elapsedMs)}ms)`);
+  const elapsed = `${Math.round(progress.elapsedMs / 100) / 10}s`;
+  if (progress.stage === 'cache-hit') {
+    setStartupStatus('Cache hit — loading terrain...');
+  } else {
+    const stageLabels: Record<string, string> = {
+      'sampling': 'Sampling terrain',
+      'stream-power': 'Eroding channels',
+      'fan-deposition': 'Building fans',
+      'thermal': 'Relaxing slopes',
+      'packaging': 'Packaging results',
+    };
+    const label = stageLabels[progress.stage] || progress.stage;
+    setStartupStatus(`Baking terrain: ${label}\n${progress.stageIndex + 1}/${progress.totalStages} · ${elapsed}`);
+  }
 });
+
+setStartupStatus('Loading app...');
 
 // Water level override
 const waterParam = params.get('water');
@@ -218,5 +243,14 @@ function animate() {
 }
 
 animate();
+
+// Hide startup overlay
+const startupMs = Math.round(performance.now() - startupT0);
+if (startupEl) {
+  startupEl.classList.add('hidden');
+  setTimeout(() => startupEl.remove(), 500);
+}
+
 console.log(`[terrain] WebGPU | revZ: ${app.reversedDepthSupported} | IBL: ${app.isIblEnabled()}`);
 console.log(`[terrain] domain: extent ±${terrainDomain.extent} | erosion: ${terrainDomain.hasErosion} | cache: ${terrainDomain.fromCache} | bake: ${terrainDomain.bakeTimeMs.toFixed(0)}ms`);
+console.log(`[terrain] startup: ${startupMs}ms total`);

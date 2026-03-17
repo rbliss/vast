@@ -1,6 +1,15 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { overflow: hidden; background: #000; }
+body { overflow: hidden; background: #111; }
 canvas { display: block; }
+
+#startup-status {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  color: #aab; font: 14px/1.6 monospace; text-align: center;
+  background: rgba(0,0,0,0.8); padding: 20px 32px; border-radius: 8px;
+  z-index: 100; pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+#startup-status.hidden { opacity: 0; }
 
 #info {
   position: absolute; top: 12px; left: 12px;
