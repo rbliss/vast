@@ -17,7 +17,7 @@ import {
 } from '../config';
 import type { LodLevel } from '../config';
 import type { ChunkSlot, FoliagePayload } from '../types';
-import { terrainHeight, MACRO_HEIGHT_SCALE } from '../terrainHeight';
+import type { TerrainSource } from './terrainSource';
 
 /** One-time slot creation: allocates geometry, topology, mesh. Never freed. */
 export function createChunkSlot(
@@ -111,6 +111,8 @@ export function createChunkSlot(
 
   const mat = lod.displacement ? matDisp : matNoDisp;
   const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   scene.add(mesh);
 
   tmpGeo.dispose();
@@ -191,7 +193,7 @@ export function lodForRingPos(dx: number, dz: number): LodLevel {
 }
 
 /** Mutate existing buffers in-place. Zero allocation. */
-export function rebuildChunkSlot(slot: ChunkSlot, centerCX: number, centerCZ: number): boolean {
+export function rebuildChunkSlot(slot: ChunkSlot, centerCX: number, centerCZ: number, terrain: TerrainSource): boolean {
   const cx = centerCX + slot.dx;
   const cz = centerCZ + slot.dz;
   if (cx === slot.cx && cz === slot.cz) return false;
@@ -207,7 +209,7 @@ export function rebuildChunkSlot(slot: ChunkSlot, centerCX: number, centerCZ: nu
   for (let i = 0; i < slot.gridVertCount; i++) {
     const lx = pos.getX(i), lz = pos.getZ(i);
     const wx = lx + originX, wz = lz + originZ;
-    pos.setY(i, terrainHeight(wx, wz) * MACRO_HEIGHT_SCALE);
+    pos.setY(i, terrain.sampleHeight(wx, wz));
     const u = wx / TEXTURE_WORLD_SIZE, v = wz / TEXTURE_WORLD_SIZE;
     uv.setXY(i, u, v);
     uv2.setXY(i, u, v);

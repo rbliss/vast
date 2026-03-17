@@ -57,6 +57,7 @@ export const webgpuBackend: RendererBackend = {
     const renderer = new g.WebGPURenderer({ antialias: true });
     renderer.toneMapping = g.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
+    (renderer as any).shadowMap = { enabled: true, type: 2 }; // PCFSoftShadowMap = 2
     await renderer.init();
 
     console.log('[backend:webgpu] renderer created');
@@ -83,6 +84,21 @@ export const webgpuBackend: RendererBackend = {
     const sun = new g.DirectionalLight(0xfff4e6, 2.5);
     sun.position.set(30, 50, 20);
     (scene as any).add(sun);
+
+    // Shadow setup for the sun
+    const sunAny = sun as any;
+    sunAny.castShadow = true;
+    sunAny.shadow.mapSize.width = 2048;
+    sunAny.shadow.mapSize.height = 2048;
+    sunAny.shadow.bias = -0.0005;
+    // Shadow camera covers the visible terrain area
+    const sc = sunAny.shadow.camera;
+    sc.left = -120;
+    sc.right = 120;
+    sc.top = 120;
+    sc.bottom = -120;
+    sc.near = 0.5;
+    sc.far = 300;
 
     const hemi = new g.HemisphereLight(0x87ceeb, 0x556b2f, 0.5);
     (scene as any).add(hemi);

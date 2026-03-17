@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import type { Scene } from 'three';
 import { CHUNK_SIZE, GRASS_PER_CHUNK, ROCK_PER_CHUNK, SHRUB_PER_CHUNK } from '../config';
-import { terrainHeight, MACRO_HEIGHT_SCALE } from '../terrainHeight';
+import type { TerrainSource } from '../terrain/terrainSource';
 import type { FoliagePayload, FoliageSystem } from '../types';
 
 function placeHash(x: number, y: number): number {
@@ -79,7 +79,7 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
   }
 
   /** Regenerate foliage transforms for a slot. Deterministic from (cx, cz). */
-  function rebuild(foliage: FoliagePayload, cx: number, cz: number, isFar: boolean): void {
+  function rebuild(foliage: FoliagePayload, cx: number, cz: number, isFar: boolean, terrain: TerrainSource): void {
     if (isFar) {
       foliage.grass.count = 0;
       foliage.rock.count = 0;
@@ -104,12 +104,12 @@ export function createFoliageSystem(scene: Scene, envIntensity = 0.08): FoliageS
         const jz = (placeHash(wx * 41.1, wz * 7.9) - 0.5) * step * 0.8;
         const px = wx + jx, pz = wz + jz;
 
-        const h = terrainHeight(px, pz) * MACRO_HEIGHT_SCALE;
+        const h = terrain.sampleHeight(px, pz);
 
         // Compute slope from finite differences
         const eps = 0.5;
-        const hx = terrainHeight(px + eps, pz) * MACRO_HEIGHT_SCALE;
-        const hz = terrainHeight(px, pz + eps) * MACRO_HEIGHT_SCALE;
+        const hx = terrain.sampleHeight(px + eps, pz);
+        const hz = terrain.sampleHeight(px, pz + eps);
         const fdx = (hx - h) / eps, fdz = (hz - h) / eps;
         const slope = Math.sqrt(fdx * fdx + fdz * fdz);
         const flatness = Math.max(0, 1 - slope * 1.5);

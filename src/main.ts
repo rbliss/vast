@@ -12,6 +12,8 @@ import { mustEl } from './engine/types';
 import { createHud } from './ui/hud';
 import { createScreenshotUi } from './ui/screenshotUi';
 import { createDprButtons } from './ui/dprButtons';
+import { createDefaultDocument } from './engine/document';
+import { createTerrainSource } from './engine/terrain/terrainSource';
 
 // ── Parse URL params ──
 const params = new URLSearchParams(location.search);
@@ -28,8 +30,16 @@ if (dprParam === 'auto') {
   if (v >= 1.0 && v <= Math.min(window.devicePixelRatio, 2)) dprInitial = v;
 }
 
+// ── Create world document and terrain source ──
+const worldDoc = createDefaultDocument();
+// Apply URL-driven overrides to document defaults
+worldDoc.scene.dpr.mode = dprMode;
+worldDoc.scene.dpr.initial = dprInitial;
+
+const terrainSource = createTerrainSource(worldDoc);
+
 // ── Create engine (WebGPU) ──
-const app = await TerrainApp.createAsync(document.body, {
+const app = await TerrainApp.createAsync(document.body, worldDoc, terrainSource, {
   debug: debugMode,
   dprMode,
   dprInitial,
@@ -52,6 +62,26 @@ const snapshotUi = createScreenshotUi(
 window.__snapshot = snapshotUi.take;
 
 const hud = createHud(mustEl('fps'));
+
+// ── Clay mode toggle ──
+const clayBtn = mustEl<HTMLButtonElement>('clayBtn');
+const clayParam = params.get('clay');
+
+function updateClayButton() {
+  const on = app.isClayMode();
+  clayBtn.textContent = on ? 'Clay On' : 'Clay';
+  clayBtn.classList.toggle('active', on);
+}
+
+if (clayParam !== null) {
+  app.setClayMode(true);
+}
+
+clayBtn.addEventListener('click', () => {
+  app.toggleClayMode();
+  updateClayButton();
+});
+updateClayButton();
 
 // ── IBL toggle ──
 const iblBtn = mustEl<HTMLButtonElement>('iblBtn');

@@ -9,6 +9,8 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, TextureSet, TerrainMaterials } from './types';
 import type { DprController } from './controls/dprController';
 import type { RendererBackend, RendererLike } from './backend/types';
+import type { TerrainSource } from './terrain/terrainSource';
+import type { WorldDocumentV0 } from './document';
 
 import { getBackend } from './backend';
 import { createOrbitMovement } from './controls/orbitMovement';
@@ -37,6 +39,8 @@ export class TerrainApp {
   readonly matNoDisp: MeshStandardMaterial;
   readonly foliage: FoliageSystem;
   readonly slots: ChunkSlot[];
+  readonly terrain: TerrainSource;
+  readonly document: WorldDocumentV0;
 
   centerCX: number;
   centerCZ: number;
@@ -45,24 +49,35 @@ export class TerrainApp {
   private _applyMovement: (dt: number) => void;
   private _prevTime: number;
   private _iblEnabled: boolean;
+  private _clayMode: boolean;
   private _hemiLight: THREE.HemisphereLight;
+  private _sunLight: THREE.DirectionalLight;
   private _envMap: THREE.Texture;
   private _coverageMode: 'base' | 'shallow' | 'horizon';
   private _activeRadius: number;
+  private _clayMatDisp: MeshStandardMaterial | null;
+  private _clayMatNoDisp: MeshStandardMaterial | null;
 
   /** Async factory — initializes WebGPU backend + TSL materials. */
-  static async createAsync(container: HTMLElement, opts: TerrainAppOptions = {}): Promise<TerrainApp> {
+  static async createAsync(
+    container: HTMLElement,
+    doc: WorldDocumentV0,
+    terrainSource: TerrainSource,
+    opts: TerrainAppOptions = {},
+  ): Promise<TerrainApp> {
     const backend = await getBackend();
     const { renderer, reversedDepthSupported } = await backend.createRenderer({
       preserveDrawingBuffer: opts.debug,
     });
 
     const { createNodeTerrainMaterials } = await import('./materials/terrainMaterialNode');
-    return new TerrainApp(container, opts, backend, renderer, reversedDepthSupported, createNodeTerrainMaterials);
+    return new TerrainApp(container, doc, terrainSource, opts, backend, renderer, reversedDepthSupported, createNodeTerrainMaterials);
   }
 
   private constructor(
     container: HTMLElement,
+    doc: WorldDocumentV0,
+    terrainSource: TerrainSource,
     opts: TerrainAppOptions,
     backend: RendererBackend,
     renderer: RendererLike,
@@ -70,6 +85,8 @@ export class TerrainApp {
     materialFactory: (textures: TextureSet) => TerrainMaterials,
   ) {
     this.debug = opts.debug || false;
+    this.document = doc;
+    this.terrain = terrainSource;
     this._backend = backend;
     this.renderer = renderer;
     this.reversedDepthSupported = reversedDepthSupported;
@@ -78,12 +95,17 @@ export class TerrainApp {
     this.camera = backend.createCamera(window.innerWidth / window.innerHeight) as PerspectiveCamera;
     const lighting = backend.createLighting(this.scene);
     this._hemiLight = lighting.hemi as THREE.HemisphereLight;
+    this._sunLight = lighting.sun as THREE.DirectionalLight;
 
     // IBL
     const env = backend.createEnvironment();
     this._envMap = env.environmentMap;
     this._iblEnabled = true;
-    (lighting.sun as THREE.DirectionalLight).position.copy(env.sunDirection).multiplyScalar(50);
+    this._clayMode = false;
+    this._clayMatDisp = null;
+    this._clayMatNoDisp = null;
+    this._sunLight.position.copy(env.sunDirection).multiplyScalar(50);
+    (this.scene as any).add(this._sunLight.target);
 
     // DPR
     this.dpr = createDprController(this.renderer, {
@@ -148,6 +170,57 @@ export class TerrainApp {
     return this._iblEnabled;
   }
 
+  // ── Clay mode toggle ──
+
+  isClayMode(): boolean { return this._clayMode; }
+
+  setClayMode(enabled: boolean): void {
+    this._clayMode = enabled;
+
+    // Create clay materials lazily
+    if (enabled && !this._clayMatDisp) {
+      const clay = new THREE.MeshStandardMaterial({
+        color: 0xc8c0b8,
+        roughness: 0.85,
+        metalness: 0,
+      });
+      this._clayMatDisp = clay;
+      this._clayMatNoDisp = clay;
+    }
+
+    const matD = enabled ? this._clayMatDisp! : this.matDisp;
+    const matN = enabled ? this._clayMatNoDisp! : this.matNoDisp;
+
+    // Swap materials on all chunk meshes
+    for (const slot of this.slots) {
+      slot.mesh.material = slot.lod.displacement ? matD : matN;
+    }
+
+    // Hide/show foliage
+    for (const slot of this.slots) {
+      if (enabled) {
+        slot.foliage.grass.visible = false;
+        slot.foliage.rock.visible = false;
+        slot.foliage.shrub.visible = false;
+      }
+    }
+    if (!enabled) {
+      this._updateSlotVisibility();
+    }
+
+    // Disable fog in clay mode for cleaner shape evaluation
+    if (enabled) {
+      (this.scene as any).fog = null;
+    } else {
+      (this.scene as any).fog = new THREE.FogExp2(0x87ceeb, 0.005);
+    }
+  }
+
+  toggleClayMode(): boolean {
+    this.setClayMode(!this._clayMode);
+    return this._clayMode;
+  }
+
   private _buildSlots(): void {
     for (let dz = -HORIZON_GRID_RADIUS; dz <= HORIZON_GRID_RADIUS; dz++) {
       for (let dx = -HORIZON_GRID_RADIUS; dx <= HORIZON_GRID_RADIUS; dx++) {
@@ -169,9 +242,9 @@ export class TerrainApp {
 
     let rebuilt = 0;
     for (const slot of this.slots) {
-      if (rebuildChunkSlot(slot, this.centerCX, this.centerCZ)) {
+      if (rebuildChunkSlot(slot, this.centerCX, this.centerCZ, this.terrain)) {
         const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
-        this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= BASE_GRID_RADIUS);
+        this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= BASE_GRID_RADIUS, this.terrain);
         rebuilt++;
       }
     }
@@ -251,6 +324,15 @@ export class TerrainApp {
     }
 
     this.updateChunks();
+
+    // Keep shadow camera centered on orbit target
+    const tgt = this.controls.target;
+    this._sunLight.target.position.copy(tgt);
+    this._sunLight.target.updateMatrixWorld();
+    this._sunLight.position.copy(tgt).add(
+      new THREE.Vector3(30, 50, 20).normalize().multiplyScalar(100)
+    );
+
     this.renderer.render(this.scene, this.camera);
 
     return { now, dt };
