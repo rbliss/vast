@@ -230,12 +230,8 @@ export class TerrainApp {
       this._updateSlotVisibility();
     }
 
-    // Disable fog in clay mode for cleaner shape evaluation
-    if (enabled) {
-      (this.scene as any).fog = null;
-    } else {
-      (this.scene as any).fog = new THREE.FogExp2(0x87ceeb, 0.0015);
-    }
+    // Note: fog/aerial perspective is now per-material in the terrain shader.
+    // Clay mode uses its own material which has no aerial perspective.
   }
 
   toggleClayMode(): boolean {

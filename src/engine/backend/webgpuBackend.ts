@@ -68,7 +68,8 @@ export const webgpuBackend: RendererBackend = {
     const g = assertGpu();
     const scene = new g.Scene() as unknown as Scene;
     (scene as any).background = new g.Color(0x87ceeb);
-    (scene as any).fog = new g.FogExp2(0x87ceeb, 0.0015);
+    // Fog is now handled per-material via aerial perspective in the terrain shader
+    // (scene as any).fog = new g.FogExp2(0x87ceeb, 0.0015);
     return scene;
   },
 
