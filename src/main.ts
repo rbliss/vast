@@ -75,6 +75,12 @@ window.__snapshot = snapshotUi.take;
 
 const hud = createHud(mustEl('fps'));
 
+// ── Exposure control ──
+const exposureParam = params.get('exposure');
+if (exposureParam) {
+  app.setExposure(parseFloat(exposureParam));
+}
+
 // ── Sun direction controls ──
 const sunBtn = mustEl<HTMLButtonElement>('sunBtn');
 const sunPresets = [

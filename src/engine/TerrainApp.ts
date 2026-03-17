@@ -62,6 +62,7 @@ export class TerrainApp {
   private _activeRadius: number;
   private _water: WaterSystem | null;
   private _clouds: CloudSystem | null;
+  private _exposure: number;
   private _clayMatDisp: MeshStandardMaterial | null;
   private _clayMatNoDisp: MeshStandardMaterial | null;
   private _overlayMode: OverlayMode;
@@ -181,6 +182,9 @@ export class TerrainApp {
 
     // Clouds
     this._clouds = createCloudSystem(this.scene as any);
+
+    // Exposure
+    this._exposure = 1.0;
 
     // Chunk pool
     this.slots = [];
@@ -338,6 +342,15 @@ export class TerrainApp {
 
     // Update aerial perspective uniform
     sunWarmthUniform.value = warmth * 0.6; // damped so it's subtle
+  }
+
+  // ── Exposure / tone mapping ──
+
+  getExposure(): number { return this._exposure; }
+
+  setExposure(value: number): void {
+    this._exposure = Math.max(0.2, Math.min(3.0, value));
+    (this.renderer as any).toneMappingExposure = this._exposure;
   }
 
   private _buildSlots(): void {
