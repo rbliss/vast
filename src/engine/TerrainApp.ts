@@ -61,6 +61,8 @@ export class TerrainApp {
   private _clayMatNoDisp: MeshStandardMaterial | null;
   private _overlayMode: OverlayMode;
   private _fieldTextures: FieldTextures | null;
+  private _sunAzimuth: number;  // degrees from north (0=N, 90=E, 180=S, 270=W)
+  private _sunElevation: number; // degrees above horizon
 
   /** Async factory — initializes WebGPU backend + TSL materials. */
   static async createAsync(
@@ -122,7 +124,9 @@ export class TerrainApp {
     this._clayMatNoDisp = null;
     this._overlayMode = 'none';
     this._fieldTextures = fieldTextures;
-    this._sunLight.position.copy(env.sunDirection).multiplyScalar(50);
+    this._sunAzimuth = 210;  // SW direction (default)
+    this._sunElevation = 35; // moderate elevation for good shadow definition
+    this._updateSunDirection();
     (this.scene as any).add(this._sunLight.target);
 
     // DPR
@@ -264,6 +268,40 @@ export class TerrainApp {
     }
   }
 
+  // ── Sun direction controls ──
+
+  getSunAzimuth(): number { return this._sunAzimuth; }
+  getSunElevation(): number { return this._sunElevation; }
+
+  setSunDirection(azimuth: number, elevation: number): void {
+    this._sunAzimuth = azimuth;
+    this._sunElevation = Math.max(5, Math.min(85, elevation));
+    this._updateSunDirection();
+  }
+
+  private _sunDirectionVector(): THREE.Vector3 {
+    const azRad = (this._sunAzimuth * Math.PI) / 180;
+    const elRad = (this._sunElevation * Math.PI) / 180;
+    return new THREE.Vector3(
+      Math.sin(azRad) * Math.cos(elRad),
+      Math.sin(elRad),
+      Math.cos(azRad) * Math.cos(elRad),
+    );
+  }
+
+  private _updateSunDirection(): void {
+    const dir = this._sunDirectionVector();
+    this._sunLight.position.copy(dir).multiplyScalar(100);
+    // Warm color at low elevation, cooler at high
+    const warmth = 1 - this._sunElevation / 85;
+    const r = 1.0;
+    const g = 0.95 - warmth * 0.1;
+    const b = 0.9 - warmth * 0.25;
+    (this._sunLight as any).color.setRGB(r, g, b);
+    // Intensity: slightly stronger at low angles for dramatic shadows
+    (this._sunLight as any).intensity = 2.2 + warmth * 0.8;
+  }
+
   private _buildSlots(): void {
     for (let dz = -HORIZON_GRID_RADIUS; dz <= HORIZON_GRID_RADIUS; dz++) {
       for (let dx = -HORIZON_GRID_RADIUS; dx <= HORIZON_GRID_RADIUS; dx++) {
@@ -373,12 +411,12 @@ export class TerrainApp {
 
     this.updateChunks();
 
-    // Keep shadow camera centered on orbit target
+    // Keep shadow camera following orbit target
     const tgt = this.controls.target;
     this._sunLight.target.position.copy(tgt);
     this._sunLight.target.updateMatrixWorld();
     this._sunLight.position.copy(tgt).add(
-      new THREE.Vector3(30, 50, 20).normalize().multiplyScalar(100)
+      this._sunDirectionVector().multiplyScalar(100)
     );
 
     this.renderer.render(this.scene, this.camera);

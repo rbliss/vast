@@ -70,6 +70,34 @@ window.__snapshot = snapshotUi.take;
 
 const hud = createHud(mustEl('fps'));
 
+// ── Sun direction controls ──
+const sunBtn = mustEl<HTMLButtonElement>('sunBtn');
+const sunPresets = [
+  { label: 'SW 35°', az: 210, el: 35 },
+  { label: 'SE 25°', az: 135, el: 25 },
+  { label: 'E 15°', az: 90, el: 15 },
+  { label: 'NW 45°', az: 315, el: 45 },
+  { label: 'S 60°', az: 180, el: 60 },
+];
+let sunPresetIdx = 0;
+
+// Apply URL params if present
+const sunAzParam = params.get('sunaz');
+const sunElParam = params.get('sunel');
+if (sunAzParam || sunElParam) {
+  const az = sunAzParam ? parseFloat(sunAzParam) : 210;
+  const el = sunElParam ? parseFloat(sunElParam) : 35;
+  app.setSunDirection(az, el);
+  sunBtn.textContent = `Sun: ${Math.round(az)}° ${Math.round(el)}°`;
+}
+
+sunBtn.addEventListener('click', () => {
+  sunPresetIdx = (sunPresetIdx + 1) % sunPresets.length;
+  const p = sunPresets[sunPresetIdx];
+  app.setSunDirection(p.az, p.el);
+  sunBtn.textContent = `Sun: ${p.label}`;
+});
+
 // ── Debug overlay toggle ──
 const overlayBtn = mustEl<HTMLButtonElement>('overlayBtn');
 const overlayLabels: Record<string, string> = {
