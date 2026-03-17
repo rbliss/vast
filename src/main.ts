@@ -449,20 +449,33 @@ if (!isTestEnv && terrainSource instanceof (await import('./engine/terrain/edita
     brushStrength = e.detail.strength;
   }) as EventListener);
 
-  // Brush preview on hover
+  // Brush preview on hover — throttled to once per frame
+  let pendingMouseNDC: { x: number; y: number } | null = null;
+  let hoverRAF: number | null = null;
+
   viewportHost.addEventListener('mousemove', (e: MouseEvent) => {
     const rect = viewportHost.getBoundingClientRect();
-    const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-    const hit = app.raycastTerrain(ndcX, ndcY);
-    if (hit) {
-      app.updateBrushPreview(hit.x, hit.z, brushRadius);
-    } else {
-      app.hideBrushPreview();
+    pendingMouseNDC = {
+      x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      y: -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    };
+    if (!hoverRAF) {
+      hoverRAF = requestAnimationFrame(() => {
+        hoverRAF = null;
+        if (pendingMouseNDC) {
+          const hit = app.raycastTerrain(pendingMouseNDC.x, pendingMouseNDC.y);
+          if (hit) {
+            app.updateBrushPreview(hit.x, hit.z, brushRadius);
+          } else {
+            app.hideBrushPreview();
+          }
+        }
+      });
     }
   });
 
   viewportHost.addEventListener('mouseleave', () => {
+    pendingMouseNDC = null;
     app.hideBrushPreview();
   });
 

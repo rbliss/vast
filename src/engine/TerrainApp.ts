@@ -460,12 +460,18 @@ export class TerrainApp {
     return ok;
   }
 
-  /** Raycast to terrain surface — returns world XZ position or null */
+  /** Pick terrain position — uses fast heightfield ray intersection in editable mode,
+   *  falls back to mesh raycasting for baked terrain */
   raycastTerrain(ndcX: number, ndcY: number): { x: number; z: number; y: number } | null {
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
 
-    // Raycast against visible chunk meshes
+    // Fast path: direct heightfield intersection (no mesh raycasting)
+    if (this._editableHF) {
+      return this._rayHeightfield(raycaster.ray);
+    }
+
+    // Slow path: mesh raycasting for baked terrain
     const meshes = this.slots
       .filter(s => s.mesh.visible)
       .map(s => s.mesh);
@@ -476,6 +482,36 @@ export class TerrainApp {
       return { x: p.x, z: p.z, y: p.y };
     }
     return null;
+  }
+
+  /** Fast ray-heightfield intersection via ray march + refinement */
+  private _rayHeightfield(ray: THREE.Ray): { x: number; z: number; y: number } | null {
+    const origin = ray.origin;
+    const dir = ray.direction;
+
+    // Ray must be pointing downward to hit a flat-ish heightfield
+    if (dir.y >= 0 && origin.y > 0) return null;
+
+    // Step 1: intersect ray with the Y=0 base plane to get approximate XZ
+    // For sculpted terrain, we refine from there
+    const t0 = -origin.y / dir.y;
+    if (t0 < 0) return null;
+
+    let x = origin.x + dir.x * t0;
+    let z = origin.z + dir.z * t0;
+
+    // Step 2: refine by sampling heightfield at the intersection point
+    // and iterating to find where ray.y ≈ terrain.y
+    for (let i = 0; i < 8; i++) {
+      const h = this.terrain.sampleHeight(x, z);
+      const tH = (origin.y - h) / -dir.y;
+      if (tH < 0) break;
+      x = origin.x + dir.x * tH;
+      z = origin.z + dir.z * tH;
+    }
+
+    const y = this.terrain.sampleHeight(x, z);
+    return { x, z, y };
   }
 
   // ── Terrain source swap (for rebake) ──
