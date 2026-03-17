@@ -76,7 +76,7 @@ export const webgpuBackend: RendererBackend = {
   createCamera(aspect: number) {
     const g = assertGpu();
     const camera = new g.PerspectiveCamera(55, aspect, 0.1, 1200);
-    camera.position.set(50, 50, 50);
+    camera.position.set(150, 100, 150);
     return camera;
   },
 

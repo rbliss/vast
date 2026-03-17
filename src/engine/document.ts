@@ -144,8 +144,8 @@ export function createDefaultDocument(): WorldDocument {
     },
     scene: {
       camera: {
-        position: [50, 50, 50],
-        target: [0, 0, 0],
+        position: [150, 100, 150],
+        target: [0, 10, 0],
         fov: 55,
       },
       sun: { azimuth: 210, elevation: 35 },
