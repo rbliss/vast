@@ -11,6 +11,7 @@ import type { DprController } from './controls/dprController';
 import type { RendererBackend, RendererLike } from './backend/types';
 import type { TerrainSource } from './terrain/terrainSource';
 import type { WorldDocumentV0 } from './document';
+import type { TerrainBakeArtifacts } from './bake/types';
 import { applyDebugOverlay, type OverlayMode } from './terrain/debugOverlay';
 import { generateFieldTextures, type FieldTextures } from './terrain/fieldTextures';
 import { sunWarmthUniform } from './materials/terrainMaterialNode';
@@ -79,21 +80,20 @@ export class TerrainApp {
     doc: WorldDocumentV0,
     terrainSource: TerrainSource,
     opts: TerrainAppOptions = {},
+    bakeArtifacts?: TerrainBakeArtifacts | null,
   ): Promise<TerrainApp> {
     const backend = await getBackend();
     const { renderer, reversedDepthSupported } = await backend.createRenderer({
       preserveDrawingBuffer: opts.debug,
     });
 
-    // Generate field textures from the terrain source for material blending
-    // Use deposition map from erosion if available
-    const erodedSource = terrainSource as any;
-    const depositionMap = erodedSource.depositionMap ?? null;
-    const erosionGridSize = erodedSource._gridSize ?? null;
-    const erosionExtent = erodedSource._extent ?? 200;
+    // Generate field textures from bake artifacts (formal metadata, no private field access)
+    const bakeExtent = bakeArtifacts?.metadata.extent ?? 200;
+    const bakeGridSize = bakeArtifacts?.metadata.gridSize ?? undefined;
+    const depositionMap = bakeArtifacts?.depositionMap ?? null;
     const fieldTextures = generateFieldTextures(
-      terrainSource, 256, erosionExtent,
-      depositionMap, erosionGridSize,
+      terrainSource, 256, bakeExtent,
+      depositionMap, bakeGridSize,
     );
 
     const { createNodeTerrainMaterials } = await import('./materials/terrainMaterialNode');

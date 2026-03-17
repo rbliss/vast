@@ -43,7 +43,7 @@ if (presetParam) {
   worldDoc.terrain.preset = presetParam;
 }
 
-const terrainSource = createTerrainSource(worldDoc);
+const { source: terrainSource, bakeArtifacts } = createTerrainSource(worldDoc);
 
 // Water level override
 const waterParam = params.get('water');
@@ -55,7 +55,7 @@ const app = await TerrainApp.createAsync(document.body, worldDoc, terrainSource,
   dprMode,
   dprInitial,
   waterLevel,
-});
+}, bakeArtifacts);
 
 // ── Wire UI ──
 const dprBtns = createDprButtons(mustEl('dprRow'), app.dpr);
