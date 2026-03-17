@@ -16,7 +16,7 @@ import type { TerrainBakeArtifacts } from './bake/types';
 import type { TerrainDomainConfig } from './bake/terrainDomain';
 import { applyDebugOverlay, type OverlayMode } from './terrain/debugOverlay';
 import { generateFieldTextures, type FieldTextures } from './terrain/fieldTextures';
-import { sunWarmthUniform } from './materials/terrainMaterialNode';
+import { sunWarmthUniform, matSnowThreshold, matRockSlopeMin, matRockSlopeMax, matSedimentEmphasis } from './materials/terrainMaterialNode';
 import { createWaterSystem, type WaterSystem, type WaterConfig, DEFAULT_WATER_CONFIG } from './water/waterSystem';
 import { createCloudSystem, type CloudSystem } from './sky/cloudLayer';
 import { createPresentationPipeline, type PresentationPipeline } from './postprocess/presentationPipeline';
@@ -416,6 +416,15 @@ export class TerrainApp {
 
   setCloudCoverage(coverage: number): void {
     if (this._clouds) this._clouds.setCoverage(coverage);
+  }
+
+  // ── Material parameter controls (Live) ──
+
+  setMaterialParams(params: { snowThreshold?: number; rockSlopeMin?: number; rockSlopeMax?: number; sedimentEmphasis?: number }): void {
+    if (params.snowThreshold !== undefined) matSnowThreshold.value = params.snowThreshold;
+    if (params.rockSlopeMin !== undefined) matRockSlopeMin.value = params.rockSlopeMin;
+    if (params.rockSlopeMax !== undefined) matRockSlopeMax.value = params.rockSlopeMax;
+    if (params.sedimentEmphasis !== undefined) matSedimentEmphasis.value = params.sedimentEmphasis;
   }
 
   // ── Exposure / tone mapping ──

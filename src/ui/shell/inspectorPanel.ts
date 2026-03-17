@@ -228,14 +228,14 @@ export class InspectorPanel extends LitElement {
         <div class="section-header" @click=${() => this._materialsOpen = !this._materialsOpen}>
           <span class="arrow">${this._materialsOpen ? '▼' : '▶'}</span>
           Materials
-          <span class="class-tag tag-saved">Saved</span>
+          <span class="class-tag tag-live">Live</span>
         </div>
         ${this._materialsOpen ? html`<div class="section-body">
           ${this._slider('Snow', this._snowThreshold, 0.5, 1.0, 0.01, v => { this._snowThreshold = v; this._fire('set-material', { snowThreshold: v }); })}
           ${this._slider('Rock Min', this._rockSlopeMin, 0.1, 0.8, 0.02, v => { this._rockSlopeMin = v; this._fire('set-material', { rockSlopeMin: v }); })}
           ${this._slider('Rock Max', this._rockSlopeMax, 0.2, 1.0, 0.02, v => { this._rockSlopeMax = v; this._fire('set-material', { rockSlopeMax: v }); })}
           ${this._slider('Sediment', this._sedimentEmphasis, 0, 1, 0.05, v => { this._sedimentEmphasis = v; this._fire('set-material', { sedimentEmphasis: v }); })}
-          <div class="status-text">Saved to document (not yet live)</div>
+          <div class="status-text">Updates terrain in real time</div>
         </div>` : ''}
       </div>`;
   }

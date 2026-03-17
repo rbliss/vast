@@ -262,9 +262,10 @@ shell.addEventListener('set-terrain-param', ((e: CustomEvent) => {
   projectStore.markDirty();
 }) as EventListener);
 
-// ── Inspector material changes (Class B — apply/document) ──
+// ── Inspector material changes (Live — uniforms update immediately) ──
 shell.addEventListener('set-material', ((e: CustomEvent) => {
   Object.assign(worldDoc.materials, e.detail);
+  app.setMaterialParams(e.detail);
   projectStore.markDirty();
 }) as EventListener);
 
@@ -384,9 +385,10 @@ projectStore.subscribe(() => {
   }
 });
 
-// ── Apply document scene state to engine + stores ──
+// ── Apply document state to engine + stores ──
 app.setSunDirection(worldDoc.scene.sun.azimuth, worldDoc.scene.sun.elevation);
 app.setExposure(worldDoc.scene.exposure);
+app.setMaterialParams(worldDoc.materials);
 if (!worldDoc.scene.ibl) app.setIblEnabled(false);
 if (worldDoc.scene.presentation) {
   app.setPresentationMode(true).then(syncToolbar);

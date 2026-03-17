@@ -114,22 +114,23 @@ const fieldBiomeWeights = Fn(([wPos, wNorm, fieldTex, fieldExtent]: [any, any, a
   const bn = biomeNoise(wPos.xz.mul(0.04));
   const detailNoise = biomeNoise(wPos.xz.mul(0.12)).mul(0.15);
 
-  // ── Snow: high altitude + flat (tighter threshold, less noise influence) ──
-  const snowBase = smoothstep(float(0.78), float(0.92), fieldAlt.add(detailNoise.mul(0.5)));
+  // ── Snow: high altitude + flat (threshold from uniform) ──
+  const snowStart = matSnowThreshold;
+  const snowEnd = matSnowThreshold.add(0.14);
+  const snowBase = smoothstep(snowStart, snowEnd, fieldAlt.add(detailNoise.mul(0.5)));
   const snowSlopeMask = smoothstep(float(0.7), float(0.4), slope);
   const snow = snowBase.mul(snowSlopeMask).mul(inField);
 
-  // ── Rock: steep or high altitude ──
-  const rockFromSlope = smoothstep(float(0.3), float(0.6), slope.add(detailNoise.mul(0.3)));
+  // ── Rock: steep or high altitude (thresholds from uniforms) ──
+  const rockFromSlope = smoothstep(matRockSlopeMin, matRockSlopeMax, slope.add(detailNoise.mul(0.3)));
   const rockFromAlt = smoothstep(float(0.6), float(0.8), fieldAlt).mul(0.4).mul(inField);
   const rock = max(rockFromSlope, rockFromAlt);
 
-  // ── Sediment: driven by explicit deposition mask (alpha channel) ──
+  // ── Sediment: driven by deposition mask, emphasis from uniform ──
   const flatness = float(1).sub(rock);
-  // fieldFlow is now deposition amount (if available) or flow proxy
   const sedimentFromDeposition = smoothstep(float(0.08), float(0.35), fieldFlow).mul(inField);
   const sedimentSlopeMask = smoothstep(float(0.3), float(0.1), slope);
-  const sediment = flatness.mul(sedimentFromDeposition).mul(sedimentSlopeMask);
+  const sediment = flatness.mul(sedimentFromDeposition).mul(sedimentSlopeMask).mul(matSedimentEmphasis.div(0.4));
 
   // ── Grass: flat, mid altitude, not in wet channels ──
   const grassAlt = smoothstep(float(0.15), float(0.35), fieldAlt)
@@ -239,6 +240,12 @@ const aerialPerspective = Fn(([surfaceColor, wPos, sunWarmthU]: [any, any, any])
 
 /** Shared sun warmth uniform — updated by TerrainApp when sun direction changes */
 export const sunWarmthUniform = uniform(0.0);
+
+/** Material parameter uniforms — updated by TerrainApp from document values */
+export const matSnowThreshold = uniform(0.78);
+export const matRockSlopeMin = uniform(0.3);
+export const matRockSlopeMax = uniform(0.6);
+export const matSedimentEmphasis = uniform(0.4);
 
 export function createNodeTerrainMaterials(
   textures: TextureSet,
