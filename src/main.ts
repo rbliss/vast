@@ -135,8 +135,12 @@ const sunPresets = [
 ];
 let sunPresetIdx = 0;
 
-// ── Initialize stores ──
+// ── Initialize stores + inspector ──
 projectStore.setDocument(worldDoc);
+const inspector = document.getElementById('inspector') as any;
+if (inspector?.loadFromDocument) {
+  inspector.loadFromDocument(worldDoc);
+}
 projectStore.setPresetName(presetParam || 'default');
 runtimeStore.setDomain(terrainDomain);
 
@@ -175,6 +179,7 @@ shell.addEventListener('cycle-sun', () => {
   viewportStore.setSunDirection(p.az, p.el);
   worldDoc.scene.sun.azimuth = p.az;
   worldDoc.scene.sun.elevation = p.el;
+  projectStore.markDirty();
   syncToolbar();
 });
 
@@ -214,12 +219,44 @@ shell.addEventListener('set-water', ((e: CustomEvent) => {
   projectStore.markDirty();
 }) as EventListener);
 
-// ── Inspector events (Class C — rebake required) ──
-shell.addEventListener('set-preset', ((e: CustomEvent) => {
-  worldDoc.terrain.preset = e.detail;
-  worldDoc.terrain.type = 'macro';
-  projectStore.setPresetName(e.detail);
+// ── Inspector terrain param changes (Class C — rebake) ──
+shell.addEventListener('set-terrain-param', ((e: CustomEvent) => {
+  const { key, value } = e.detail;
+  switch (key) {
+    case 'preset':
+      worldDoc.terrain.preset = value;
+      worldDoc.terrain.type = 'macro';
+      projectStore.setPresetName(value);
+      break;
+    case 'spIterations':
+      worldDoc.terrain.erosion.streamPowerIterations = value;
+      break;
+    case 'erosionStrength':
+      worldDoc.terrain.erosion.erosionStrength = value;
+      break;
+    case 'diffusionStrength':
+      worldDoc.terrain.erosion.diffusionStrength = value;
+      break;
+    case 'fanStrength':
+      worldDoc.terrain.erosion.fanStrength = value;
+      break;
+    case 'thermalIterations':
+      worldDoc.terrain.erosion.thermalIterations = value;
+      break;
+  }
   authoringStore.setNeedsRebake(true);
+  projectStore.markDirty();
+}) as EventListener);
+
+// ── Inspector material changes (Class B — apply/document) ──
+shell.addEventListener('set-material', ((e: CustomEvent) => {
+  Object.assign(worldDoc.materials, e.detail);
+  projectStore.markDirty();
+}) as EventListener);
+
+// ── Inspector scatter changes (Class B — apply/document) ──
+shell.addEventListener('set-scatter', ((e: CustomEvent) => {
+  Object.assign(worldDoc.scatter, e.detail);
   projectStore.markDirty();
 }) as EventListener);
 
