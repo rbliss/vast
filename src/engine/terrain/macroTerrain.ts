@@ -15,6 +15,7 @@ import {
   type RangeParams, type BasinParams, type PlateauParams,
   type RidgeParams, type DrainageParams,
 } from './macroFields';
+import { ErodedTerrainSource, type ErosionConfig, DEFAULT_EROSION } from './erodedTerrain';
 
 // ── Configuration ──
 
@@ -30,6 +31,8 @@ export interface MacroTerrainConfig {
   reliefNoise: { frequency: number; octaves: number; amplitude: number; seed: number };
   /** Final height multiplier (world units) */
   heightScale: number;
+  /** Erosion refinement config (null = no erosion) */
+  erosion: ErosionConfig | null;
 }
 
 // ── Presets ──
@@ -64,6 +67,7 @@ const CHAIN_PRESET: MacroTerrainConfig = {
   baseNoise: { frequency: 0.006, octaves: 4, amplitude: 0.4, seed: 0 },
   reliefNoise: { frequency: 0.04, octaves: 3, amplitude: 0.08, seed: 100 },
   heightScale: 20,
+  erosion: { ...DEFAULT_EROSION },
 };
 
 const BASIN_PRESET: MacroTerrainConfig = {
@@ -98,6 +102,10 @@ const BASIN_PRESET: MacroTerrainConfig = {
   baseNoise: { frequency: 0.005, octaves: 4, amplitude: 0.35, seed: 7 },
   reliefNoise: { frequency: 0.035, octaves: 3, amplitude: 0.06, seed: 107 },
   heightScale: 20,
+  erosion: {
+    ...DEFAULT_EROSION,
+    hydraulic: { ...DEFAULT_EROSION.hydraulic, droplets: 60000, seed: 99 },
+  },
 };
 
 const PLATEAU_PRESET: MacroTerrainConfig = {
@@ -129,6 +137,10 @@ const PLATEAU_PRESET: MacroTerrainConfig = {
   baseNoise: { frequency: 0.005, octaves: 3, amplitude: 0.25, seed: 15 },
   reliefNoise: { frequency: 0.045, octaves: 3, amplitude: 0.05, seed: 115 },
   heightScale: 20,
+  erosion: {
+    ...DEFAULT_EROSION,
+    hydraulic: { ...DEFAULT_EROSION.hydraulic, droplets: 60000, seed: 77 },
+  },
 };
 
 export const MACRO_PRESETS: Record<string, MacroTerrainConfig> = {
@@ -190,4 +202,17 @@ export class MacroTerrainSource implements TerrainSource {
 
     return h * c.heightScale;
   }
+}
+
+/**
+ * Create a macro terrain source, optionally with erosion refinement.
+ * When erosion is enabled, the macro source is sampled into a grid,
+ * eroded, and the result is served via bilinear interpolation.
+ */
+export function createMacroTerrainSource(config: MacroTerrainConfig): TerrainSource {
+  const base = new MacroTerrainSource(config);
+  if (config.erosion) {
+    return new ErodedTerrainSource(base, config.erosion);
+  }
+  return base;
 }

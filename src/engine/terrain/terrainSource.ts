@@ -9,7 +9,7 @@
 
 import { terrainHeight, MACRO_HEIGHT_SCALE } from '../terrainHeight';
 import type { WorldDocumentV0 } from '../document';
-import { MacroTerrainSource, MACRO_PRESETS } from './macroTerrain';
+import { createMacroTerrainSource, MACRO_PRESETS } from './macroTerrain';
 
 // ── Interface ──
 
@@ -45,7 +45,7 @@ export function createTerrainSource(doc: WorldDocumentV0): TerrainSource {
   if (doc.terrain.type === 'macro') {
     const preset = MACRO_PRESETS[doc.terrain.preset || 'chain'];
     if (!preset) throw new Error(`Unknown macro preset: ${doc.terrain.preset}`);
-    return new MacroTerrainSource(preset);
+    return createMacroTerrainSource(preset);
   }
   throw new Error(`Unknown terrain type: ${doc.terrain.type}`);
 }
