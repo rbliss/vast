@@ -113,17 +113,26 @@ export class ErodedTerrainSource implements TerrainSource {
       spResult = streamPowerErosion(this._grid, n, n, this._cellSize, config.streamPower);
       console.log(`[erosion] stream-power: ${config.streamPower.iterations} iterations (${(performance.now() - spT0).toFixed(0)}ms)`);
     }
-    this.depositionMap = spResult?.deposition ?? null;
+    const depositionAccum = spResult?.deposition ?? new Float32Array(n * n);
 
     // Step 2b: Fan and debris-flow deposition (uses flow data from stream-power)
+    // Snapshot heights before fan pass to capture fan/debris deposits in the mask
     if (config.fan.enabled && spResult) {
+      const preFan = new Float32Array(this._grid);
       const fanT0 = performance.now();
       applyFanDeposition(
         this._grid, spResult.area, spResult.receiver, spResult.slopes,
         n, n, this._cellSize, config.fan,
       );
+      // Add fan/debris deposit deltas to the deposition mask
+      for (let i = 0; i < n * n; i++) {
+        const delta = this._grid[i] - preFan[i];
+        if (delta > 0) depositionAccum[i] += delta;
+      }
       console.log(`[erosion] fan deposition (${(performance.now() - fanT0).toFixed(0)}ms)`);
     }
+
+    this.depositionMap = depositionAccum;
 
     // Step 3: Thermal relaxation (stabilize oversteepened slopes)
     if (config.thermal.enabled) {
