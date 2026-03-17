@@ -18,8 +18,10 @@ export interface WorldDocumentV0 {
     modified: string;
   };
   terrain: {
-    type: 'legacyProcedural';
+    type: 'legacyProcedural' | 'macro';
     heightScale: number;
+    /** Macro terrain preset name (only for type 'macro') */
+    preset?: string;
   };
   scene: {
     camera: {

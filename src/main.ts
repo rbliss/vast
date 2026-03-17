@@ -36,6 +36,13 @@ const worldDoc = createDefaultDocument();
 worldDoc.scene.dpr.mode = dprMode;
 worldDoc.scene.dpr.initial = dprInitial;
 
+// Macro terrain preset override
+const presetParam = params.get('preset');
+if (presetParam) {
+  worldDoc.terrain.type = 'macro';
+  worldDoc.terrain.preset = presetParam;
+}
+
 const terrainSource = createTerrainSource(worldDoc);
 
 // ── Create engine (WebGPU) ──
