@@ -130,10 +130,10 @@ export function createDefaultDocument(): WorldDocument {
       },
     },
     materials: {
-      snowThreshold: 0.78,
-      rockSlopeMin: 0.3,
-      rockSlopeMax: 0.6,
-      sedimentEmphasis: 0.4,
+      snowThreshold: 0.85,
+      rockSlopeMin: 0.25,
+      rockSlopeMax: 0.55,
+      sedimentEmphasis: 0.55,
     },
     scatter: {
       grassDensity: 1.0,

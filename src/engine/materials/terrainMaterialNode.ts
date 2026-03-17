@@ -121,10 +121,12 @@ const fieldBiomeWeights = Fn(([wPos, wNorm, fieldTex, fieldExtent]: [any, any, a
   const snowSlopeMask = smoothstep(float(0.7), float(0.4), slope);
   const snow = snowBase.mul(snowSlopeMask).mul(inField);
 
-  // ── Rock: steep or high altitude (thresholds from uniforms) ──
+  // ── Rock: steep, high altitude, or high curvature (cliff-band edges) ──
   const rockFromSlope = smoothstep(matRockSlopeMin, matRockSlopeMax, slope.add(detailNoise.mul(0.3)));
   const rockFromAlt = smoothstep(float(0.6), float(0.8), fieldAlt).mul(0.4).mul(inField);
-  const rock = max(rockFromSlope, rockFromAlt);
+  // Curvature boost: positive curvature (convex/ridge edges) exposes more rock
+  const curvatureRock = smoothstep(float(0), float(3), fieldCurvature.mul(50)).mul(0.25).mul(inField);
+  const rock = max(rockFromSlope, max(rockFromAlt, curvatureRock));
 
   // ── Sediment: driven by deposition mask, emphasis from uniform ──
   const flatness = float(1).sub(rock);
@@ -242,10 +244,10 @@ const aerialPerspective = Fn(([surfaceColor, wPos, sunWarmthU]: [any, any, any])
 export const sunWarmthUniform = uniform(0.0);
 
 /** Material parameter uniforms — updated by TerrainApp from document values */
-export const matSnowThreshold = uniform(0.78);
-export const matRockSlopeMin = uniform(0.3);
-export const matRockSlopeMax = uniform(0.6);
-export const matSedimentEmphasis = uniform(0.4);
+export const matSnowThreshold = uniform(0.85);
+export const matRockSlopeMin = uniform(0.25);
+export const matRockSlopeMax = uniform(0.55);
+export const matSedimentEmphasis = uniform(0.55);
 
 export function createNodeTerrainMaterials(
   textures: TextureSet,
