@@ -55,5 +55,6 @@ canvas { display: block; }
   max-width: 400px; padding: 4px 8px; border-radius: 4px;
   background: rgba(0,0,0,0.55); color: #b8d6ff;
   font: 11px/1.3 monospace; text-align: right; word-break: break-all;
+  white-space: pre-line;
 }
 #shotStatus.error { color: #ff9a9a; }
