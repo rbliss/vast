@@ -31,7 +31,7 @@ export class EditableHeightfield implements TerrainSource {
   private readonly _redoStack: Float32Array[] = [];
   private readonly _maxUndo = 50;
 
-  constructor(gridSize: number = 256, extent: number = 200) {
+  constructor(gridSize: number = 512, extent: number = 400) {
     this._gridSize = gridSize;
     this._extent = extent;
     this._cellSize = (extent * 2) / (gridSize - 1);
@@ -84,7 +84,7 @@ export class EditableHeightfield implements TerrainSource {
     const gzMin = Math.max(0, Math.floor((stamp.z - stamp.radius + this._extent) / cs));
     const gzMax = Math.min(n - 1, Math.ceil((stamp.z + stamp.radius + this._extent) / cs));
 
-    // Apply Gaussian stamp
+    // Apply soft dome stamp (smoothstep falloff — much rounder than Gaussian)
     const r2 = stamp.radius * stamp.radius;
     for (let gz = gzMin; gz <= gzMax; gz++) {
       for (let gx = gxMin; gx <= gxMax; gx++) {
@@ -95,10 +95,10 @@ export class EditableHeightfield implements TerrainSource {
         const d2 = dx * dx + dz * dz;
 
         if (d2 < r2) {
-          // Smooth falloff: Gaussian-like
-          const t = d2 / r2;
-          const falloff = Math.exp(-t * 3) * (1 - t);
-          this._grid[gz * n + gx] += stamp.strength * Math.max(0, falloff);
+          // Smoothstep dome: flat top, gentle edges, no spiky peak
+          const t = Math.sqrt(d2 / r2); // 0 at center, 1 at edge
+          const falloff = 1 - t * t * (3 - 2 * t); // smoothstep inverse
+          this._grid[gz * n + gx] += stamp.strength * falloff;
         }
       }
     }

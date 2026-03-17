@@ -115,10 +115,10 @@ if (isTestEnv) {
 } else {
   // Blank canvas: use editable heightfield (no bake)
   const { EditableHeightfield } = await import('./engine/terrain/editableHeightfield');
-  const hf = new EditableHeightfield(256, 200);
+  const hf = new EditableHeightfield(512, 400);
   terrainSource = hf;
   const { defaultDomain } = await import('./engine/bake/terrainDomain');
-  terrainDomain = defaultDomain(200);
+  terrainDomain = defaultDomain(400);
 }
 
 setStartupStatus('Loading app...');
@@ -437,11 +437,11 @@ if (!isTestEnv || !params.has('textured')) {
 
 // ── Blank canvas: init editable heightfield + sculpt interaction ──
 if (!isTestEnv && terrainSource instanceof (await import('./engine/terrain/editableHeightfield')).EditableHeightfield) {
-  app.initEditableMode(256, 200, terrainSource as any);
+  app.initEditableMode(512, 400, terrainSource as any);
 
   // Sculpt: click to raise terrain
-  let brushRadius = 10;
-  let brushStrength = 15;
+  let brushRadius = 20;
+  let brushStrength = 10;
 
   // Wire brush controls from inspector
   shell.addEventListener('set-brush', ((e: CustomEvent) => {
