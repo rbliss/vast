@@ -16,11 +16,15 @@ export const ROCK_WORLD_SIZE = 10;
 export const GRASS_WORLD_SIZE = 8;
 export const DIRT_WORLD_SIZE = 6;
 
-export const LOD_NEAR: LodLevel = { segments: 128, displacement: true };
-export const LOD_MID: LodLevel  = { segments: 64,  displacement: true };
-export const LOD_FAR: LodLevel  = { segments: 32,  displacement: false };
+export const LOD_NEAR: LodLevel      = { segments: 128, displacement: true };
+export const LOD_MID: LodLevel       = { segments: 64,  displacement: true };
+export const LOD_FAR: LodLevel       = { segments: 32,  displacement: false };
+export const LOD_ULTRA_FAR: LodLevel = { segments: 16,  displacement: false };
 
-export const GRID_RADIUS = 2;
+export const BASE_GRID_RADIUS = 2;
+export const MAX_GRID_RADIUS = 3;
+/** Pitch threshold (degrees) — below this, outer ring activates */
+export const SHALLOW_PITCH_THRESHOLD = 30;
 
 export const GRASS_PER_CHUNK = 600;
 export const ROCK_PER_CHUNK = 80;

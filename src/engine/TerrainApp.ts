@@ -16,9 +16,9 @@ import { createOrbitMovement } from './controls/orbitMovement';
 import { createDprController } from './controls/dprController';
 import { loadTextureSet } from './materials/textureSet';
 import { createTerrainMaterials } from './materials/terrainMaterial';
-import { createChunkSlot, rebuildChunkSlot } from './terrain/chunkGeometry';
+import { createChunkSlot, rebuildChunkSlot, lodForRingPos } from './terrain/chunkGeometry';
 import { createFoliageSystem } from './foliage/foliageSystem';
-import { CHUNK_SIZE, LOD_NEAR, LOD_MID, LOD_FAR, GRID_RADIUS, FOLIAGE_ENV_INTENSITY } from './config';
+import { CHUNK_SIZE, BASE_GRID_RADIUS, MAX_GRID_RADIUS, SHALLOW_PITCH_THRESHOLD, FOLIAGE_ENV_INTENSITY } from './config';
 import { TERRAIN_ENV_MAP_INTENSITY, HEMI_INTENSITY_IBL_ON, HEMI_INTENSITY_IBL_OFF } from './materials/terrain/featureModel';
 
 export class TerrainApp {
@@ -45,6 +45,7 @@ export class TerrainApp {
   private _iblEnabled: boolean;
   private _hemiLight: THREE.HemisphereLight;
   private _envMap: THREE.Texture;
+  private _activeRadius: number;
 
   /** Async factory — resolves backend + lazy material imports. */
   static async createAsync(container: HTMLElement, opts: TerrainAppOptions = {}): Promise<TerrainApp> {
@@ -119,12 +120,14 @@ export class TerrainApp {
     // Foliage
     this.foliage = createFoliageSystem(this.scene, FOLIAGE_ENV_INTENSITY);
 
-    // Chunk pool
+    // Chunk pool — preallocate max radius, activate based on camera pitch
     this.slots = [];
     this.centerCX = Infinity;
     this.centerCZ = Infinity;
+    this._activeRadius = BASE_GRID_RADIUS;
     this._buildSlots();
     this.updateChunks();
+    this._updateSlotVisibility();
 
     this._prevTime = performance.now();
   }
@@ -153,10 +156,9 @@ export class TerrainApp {
   }
 
   private _buildSlots(): void {
-    for (let dz = -GRID_RADIUS; dz <= GRID_RADIUS; dz++) {
-      for (let dx = -GRID_RADIUS; dx <= GRID_RADIUS; dx++) {
-        const d = Math.max(Math.abs(dx), Math.abs(dz));
-        const lod = d === 0 ? LOD_NEAR : d === 1 ? LOD_MID : LOD_FAR;
+    for (let dz = -MAX_GRID_RADIUS; dz <= MAX_GRID_RADIUS; dz++) {
+      for (let dx = -MAX_GRID_RADIUS; dx <= MAX_GRID_RADIUS; dx++) {
+        const lod = lodForRingPos(dx, dz);
         const foliagePayload = this.foliage.createInstances();
         const slot = createChunkSlot(lod, dx, dz, this.scene, this.matDisp, this.matNoDisp, foliagePayload);
         this.slots.push(slot);
@@ -176,12 +178,33 @@ export class TerrainApp {
     for (const slot of this.slots) {
       if (rebuildChunkSlot(slot, this.centerCX, this.centerCZ)) {
         const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
-        this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= GRID_RADIUS);
+        // Foliage only for near/mid rings (d < 2)
+        this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= BASE_GRID_RADIUS);
         rebuilt++;
       }
     }
     if (rebuilt > 0) {
       console.log(`[terrain] rebuilt ${rebuilt} slots, center: (${this.centerCX}, ${this.centerCZ})`);
+    }
+  }
+
+  /** Compute active grid radius from camera pitch angle. */
+  private _getActiveGridRadius(): number {
+    const dir = this.controls.target.clone().sub(this.camera.position);
+    dir.normalize();
+    const pitchDeg = Math.asin(Math.max(-1, Math.min(1, dir.y))) * (180 / Math.PI);
+    return Math.abs(pitchDeg) < SHALLOW_PITCH_THRESHOLD ? MAX_GRID_RADIUS : BASE_GRID_RADIUS;
+  }
+
+  /** Show/hide outer ring slots based on active radius. */
+  private _updateSlotVisibility(): void {
+    for (const slot of this.slots) {
+      const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
+      const visible = d <= this._activeRadius;
+      slot.mesh.visible = visible;
+      slot.foliage.grass.visible = visible;
+      slot.foliage.rock.visible = visible;
+      slot.foliage.shrub.visible = visible;
     }
   }
 
@@ -192,6 +215,14 @@ export class TerrainApp {
 
     this._applyMovement(dt);
     this.controls.update();
+
+    // Angle-aware outer ring activation
+    const newRadius = this._getActiveGridRadius();
+    if (newRadius !== this._activeRadius) {
+      this._activeRadius = newRadius;
+      this._updateSlotVisibility();
+    }
+
     this.updateChunks();
     this.renderer.render(this.scene, this.camera);
 
@@ -249,6 +280,8 @@ export class TerrainApp {
       terrain: {
         centerCell: { x: this.centerCX, z: this.centerCZ },
         slotCount: this.slots.length,
+        activeRadius: this._activeRadius,
+        activeSlots: this.slots.filter(s => s.mesh.visible).length,
       },
       app: {
         rendererMode: this.rendererMode,
