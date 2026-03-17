@@ -59,6 +59,7 @@ export function applyChannelGeometry(
   // and bank shaping radius at each channel cell
   const channelDepth = new Float32Array(n);
   const channelRadius = new Float32Array(n); // half-width in cells
+  const channelArea = new Float32Array(n); // effective area for maturity calc
 
   // Compute channel properties from drainage area
   for (let i = 0; i < n; i++) {
@@ -77,6 +78,7 @@ export function applyChannelGeometry(
 
     channelDepth[i] = depth;
     channelRadius[i] = halfWidthCells;
+    channelArea[i] = effectiveArea;
   }
 
   // Apply channel cross-sections
@@ -106,6 +108,11 @@ export function applyChannelGeometry(
       const px = -fdz / flen;
       const pz = fdx / flen;
 
+      // Channel maturity: larger drainage area → more alluvial (flatter bed)
+      const maturity = Math.min(1.0, Math.log2(Math.max(1, channelArea[idx])) / 10);
+      // bedFraction: how much of the channel width is flat bed (0 = V-shape, 0.5 = half is flat)
+      const bedFraction = maturity * 0.45;
+
       // Carve cross-section along the perpendicular
       const iRadius = Math.ceil(radius);
       for (let di = -iRadius; di <= iRadius; di++) {
@@ -116,20 +123,29 @@ export function applyChannelGeometry(
         const dist = Math.abs(di);
         if (dist > radius) continue;
 
-        // Cross-section profile
         const t = dist / radius; // 0 = center, 1 = bank edge
 
-        // Blend between U-shape (flat bed + steep banks) and V-shape
-        // U-shape: flat center with steep bank rise
-        // V-shape: linear rise from center
-        const uProfile = t < 0.3 ? 0 : (t - 0.3) / 0.7; // flat center, steep bank
-        const vProfile = t; // linear
-        const profile = uProfile * (1 - params.bankSteepness) + vProfile * params.bankSteepness;
+        // Geomorphic cross-section profile:
+        // - Flat alluvial bed zone (width scales with maturity)
+        // - Steep bank break above the bed
+        // - Gradual valley-side slope above banks
+        let profile: number;
+        if (t < bedFraction) {
+          // Flat bed zone — nearly no height change
+          profile = 0;
+        } else if (t < bedFraction + 0.15) {
+          // Bank break — steep transition from bed to valley side
+          const bankT = (t - bedFraction) / 0.15;
+          profile = bankT * bankT * 0.6; // steep bank
+        } else {
+          // Valley side — gradual slope to surrounding terrain
+          const sideT = (t - bedFraction - 0.15) / Math.max(0.01, 1 - bedFraction - 0.15);
+          profile = 0.6 + sideT * 0.4; // gradual rise
+        }
 
-        const carveAmount = depth * (1 - profile * profile); // parabolic fade
+        const carveAmount = depth * (1 - profile);
 
         const ni = nz * w + nx;
-        // Take the maximum carving from any overlapping channel
         if (carveAmount > carveMap[ni]) {
           carveMap[ni] = carveAmount;
         }
