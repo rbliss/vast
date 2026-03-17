@@ -390,6 +390,8 @@ export class TerrainApp {
     if (this._brushPreview) this._brushPreview.visible = false;
   }
 
+  private _groundPlane: THREE.Mesh | null = null;
+
   /** Initialize editable heightfield mode (blank canvas) */
   initEditableMode(gridSize: number = 256, extent: number = 200, existing?: EditableHeightfield): void {
     this._editableHF = existing ?? new EditableHeightfield(gridSize, extent);
@@ -401,10 +403,30 @@ export class TerrainApp {
       slot.foliage.rock.visible = false;
       slot.foliage.shrub.visible = false;
     }
+    // Add large ground plane for horizon continuity
+    this._addGroundPlane();
     // Force rebuild all chunks
     this.centerCX = Infinity;
     this.centerCZ = Infinity;
     this.updateChunks();
+  }
+
+  /** Add a large low-poly ground plane extending far beyond the editable area */
+  private _addGroundPlane(): void {
+    if (this._groundPlane) return;
+    const size = 4000; // extends 2000 units in each direction
+    const geo = new THREE.PlaneGeometry(size, size, 1, 1);
+    geo.rotateX(-Math.PI / 2);
+    // Use same clay material color
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xc8c0b8,
+      roughness: 0.85,
+      metalness: 0,
+    });
+    this._groundPlane = new THREE.Mesh(geo, mat);
+    this._groundPlane.position.y = -0.05; // slightly below terrain to avoid z-fighting
+    this._groundPlane.receiveShadow = true;
+    (this.scene as any).add(this._groundPlane);
   }
 
   /** Apply a brush stamp and rebuild affected chunks */
