@@ -237,7 +237,8 @@ export function hydraulicErosion(
       }
 
       // Update physics
-      speed = Math.sqrt(Math.max(0, speed * speed + heightDiff * params.gravity));
+      // heightDiff = newH - oldH, so downhill is negative. Speed increases going downhill.
+      speed = Math.sqrt(Math.max(0, speed * speed - heightDiff * params.gravity));
       water *= (1 - params.evaporationRate);
 
       posX = newX;

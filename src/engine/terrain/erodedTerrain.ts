@@ -1,5 +1,5 @@
 /**
- * Eroded terrain source.
+ * Bounded erosion preview bake.
  *
  * Pipeline stage that wraps a base TerrainSource:
  *   1. Samples the base source into a fixed-resolution height grid
@@ -7,8 +7,15 @@
  *   3. Runs hydraulic erosion (particle-based channel cutting)
  *   4. Samples the eroded grid via bilinear interpolation
  *
- * The eroded grid covers a fixed world-space extent centered at origin.
- * Out-of-bounds queries fall back to the base source.
+ * ARCHITECTURE LIMITATION: This is a bounded preview bake, NOT a
+ * general infinite-terrain erosion system. The eroded grid covers
+ * a fixed world-space extent centered at the origin. Near the edges,
+ * eroded heights blend smoothly back to the uneroded base source
+ * to prevent hard seams. Outside the blended region, the base source
+ * is used directly.
+ *
+ * A future tile/cell-local erosion cache aligned with chunked terrain
+ * would remove this limitation.
  */
 
 import type { TerrainSource } from './terrainSource';
@@ -48,12 +55,16 @@ export const DEFAULT_EROSION: ErosionConfig = {
   },
 };
 
+/** Fraction of extent used for edge blend (0.1 = outer 10% blends to base) */
+const EDGE_BLEND_FRACTION = 0.12;
+
 export class ErodedTerrainSource implements TerrainSource {
   private readonly _base: TerrainSource;
   private readonly _grid: Float32Array;
   private readonly _gridSize: number;
   private readonly _extent: number;
   private readonly _cellSize: number;
+  private readonly _blendStart: number;
   private readonly _computeTimeMs: number;
 
   constructor(base: TerrainSource, config: ErosionConfig = DEFAULT_EROSION) {
@@ -61,6 +72,7 @@ export class ErodedTerrainSource implements TerrainSource {
     this._gridSize = config.gridSize;
     this._extent = config.extent;
     this._cellSize = (config.extent * 2) / (config.gridSize - 1);
+    this._blendStart = config.extent * (1 - EDGE_BLEND_FRACTION);
 
     const t0 = performance.now();
 
@@ -88,7 +100,7 @@ export class ErodedTerrainSource implements TerrainSource {
     }
 
     this._computeTimeMs = performance.now() - t0;
-    console.log(`[erosion] computed in ${this._computeTimeMs.toFixed(0)}ms (${n}x${n} grid, extent ±${config.extent})`);
+    console.log(`[erosion] bounded preview bake: ${this._computeTimeMs.toFixed(0)}ms (${n}x${n} grid, extent ±${config.extent})`);
   }
 
   get computeTimeMs(): number { return this._computeTimeMs; }
@@ -98,12 +110,12 @@ export class ErodedTerrainSource implements TerrainSource {
     const gx = (x + this._extent) / this._cellSize;
     const gz = (z + this._extent) / this._cellSize;
 
-    // Out-of-bounds: fall back to base source
+    // Fully outside grid: fall back to base source
     if (gx < 0 || gx >= this._gridSize - 1 || gz < 0 || gz >= this._gridSize - 1) {
       return this._base.sampleHeight(x, z);
     }
 
-    // Bilinear interpolation
+    // Bilinear interpolation of eroded grid
     const ix = Math.floor(gx);
     const iz = Math.floor(gz);
     const fx = gx - ix;
@@ -115,9 +127,21 @@ export class ErodedTerrainSource implements TerrainSource {
     const h01 = this._grid[(iz + 1) * n + ix];
     const h11 = this._grid[(iz + 1) * n + ix + 1];
 
-    return h00 * (1 - fx) * (1 - fz) +
-           h10 * fx * (1 - fz) +
-           h01 * (1 - fx) * fz +
-           h11 * fx * fz;
+    const erodedH = h00 * (1 - fx) * (1 - fz) +
+                    h10 * fx * (1 - fz) +
+                    h01 * (1 - fx) * fz +
+                    h11 * fx * fz;
+
+    // Edge blend: smooth transition from eroded → base near grid boundary
+    const distFromCenter = Math.max(Math.abs(x), Math.abs(z));
+    if (distFromCenter > this._blendStart) {
+      const baseH = this._base.sampleHeight(x, z);
+      const t = Math.min(1, (distFromCenter - this._blendStart) / (this._extent * EDGE_BLEND_FRACTION));
+      // Smoothstep blend
+      const blend = t * t * (3 - 2 * t);
+      return erodedH * (1 - blend) + baseH * blend;
+    }
+
+    return erodedH;
   }
 }
