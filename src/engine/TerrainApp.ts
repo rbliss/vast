@@ -68,6 +68,7 @@ export class TerrainApp {
   private _exposure: number;
   private _presentationPipeline: PresentationPipeline | null;
   private _presentationMode: boolean;
+  private _domain: TerrainDomainConfig | null;
   private _clayMatDisp: MeshStandardMaterial | null;
   private _clayMatNoDisp: MeshStandardMaterial | null;
   private _overlayMode: OverlayMode;
@@ -100,7 +101,7 @@ export class TerrainApp {
     );
 
     const { createNodeTerrainMaterials } = await import('./materials/terrainMaterialNode');
-    return new TerrainApp(container, doc, terrainSource, opts, backend, renderer, reversedDepthSupported, createNodeTerrainMaterials, fieldTextures);
+    return new TerrainApp(container, doc, terrainSource, opts, backend, renderer, reversedDepthSupported, createNodeTerrainMaterials, fieldTextures, domain);
   }
 
   private constructor(
@@ -113,6 +114,7 @@ export class TerrainApp {
     reversedDepthSupported: boolean,
     materialFactory: (textures: TextureSet, fieldMap?: any, fieldExtent?: number) => TerrainMaterials,
     fieldTextures: FieldTextures | null,
+    domain?: TerrainDomainConfig,
   ) {
     this.debug = opts.debug || false;
     this.document = doc;
@@ -193,6 +195,7 @@ export class TerrainApp {
     this._exposure = 1.0;
     this._presentationPipeline = null;
     this._presentationMode = false;
+    this._domain = domain ?? null;
 
     // Chunk pool
     this.slots = [];
@@ -557,6 +560,14 @@ export class TerrainApp {
         url: location.href,
         query: Object.fromEntries(new URLSearchParams(location.search)),
       },
+      domain: this._domain ? {
+        extent: this._domain.extent,
+        bakeGridSize: this._domain.bakeGridSize,
+        hasErosion: this._domain.hasErosion,
+        hasDeposition: this._domain.hasDeposition,
+        fromCache: this._domain.fromCache,
+        bakeTimeMs: this._domain.bakeTimeMs,
+      } : null,
       gameState: {
         description: 'Terrain playground runtime snapshot — no formal gameplay state yet',
         renderer: 'webgpu',

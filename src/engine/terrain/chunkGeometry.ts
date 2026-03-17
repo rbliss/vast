@@ -230,11 +230,21 @@ export function rebuildChunkSlot(slot: ChunkSlot, centerCX: number, centerCZ: nu
     }
   }
 
-  // Update skirt vertices: Y = edge Y - depth, UV = edge UV
+  // Adaptive skirt depth: use chunk height range to handle steep features
+  let minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < slot.gridVertCount; i++) {
+    const y = pos.getY(i);
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const localRange = maxY - minY;
+  const adaptiveSkirt = Math.max(SKIRT_DEPTH, localRange * 0.5);
+
+  // Update skirt vertices: Y = edge Y - adaptive depth, UV = edge UV
   for (let i = 0; i < slot.skirtVertCount; i++) {
     const ei = slot.edgeIndices[i];
     const ni = slot.gridVertCount + i;
-    pos.setY(ni, pos.getY(ei) - SKIRT_DEPTH);
+    pos.setY(ni, pos.getY(ei) - adaptiveSkirt);
     uv.setXY(ni, uv.getX(ei), uv.getY(ei));
     uv2.setXY(ni, uv.getX(ei), uv.getY(ei));
   }

@@ -80,10 +80,15 @@ export async function createTerrainSource(
     const base = new MacroTerrainSource(preset);
 
     if (preset.erosion) {
+      let wasCached = false;
+      const wrappedProgress: BakeProgressCallback = (p) => {
+        if (p.stage === 'cache-hit') wasCached = true;
+        onProgress?.(p);
+      };
       const request = buildBakeRequest(doc)!;
-      const artifacts = await runBake(request, onProgress);
+      const artifacts = await runBake(request, wrappedProgress);
       const source = new BakedTerrainSource(base, artifacts);
-      const domain = domainFromBakeMetadata(artifacts.metadata);
+      const domain = domainFromBakeMetadata(artifacts.metadata, 256, wasCached);
       return { source, bakeArtifacts: artifacts, domain };
     }
 
