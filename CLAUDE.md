@@ -12,15 +12,20 @@ High-quality procedural terrain generation running purely in the browser with Th
 - **Water:** Terrain-depth-driven water bodies with shoreline foam
 - **Post-processing:** RenderPipeline with bloom (presentation mode)
 - **Chunk streaming:** 81-slot pool (9x9 grid) with angle-aware LOD coverage
+- **Bake pipeline:** Workerized CPU bake with OPFS cache for instant warm reloads
+- **Editor:** Lit shell + TypeScript stores + document-driven authoring
 
-## Visual quality stack (Phases A-E)
+## Completed phases
 - **A — Shape:** Macro landform primitives + stream-power erosion + fan/debris deposition
-- **B — Materials:** Field texture (slope/alt/curvature/deposition) drives 5-zone blending (snow/rock/grass/dirt/sediment)
+- **B — Materials:** Field texture drives 5-zone blending (snow/rock/grass/dirt/sediment) + anti-tiling
 - **C — Scatter:** Altitude/deposition-aware rocks/grass/shrubs with procedural rock variants
 - **D — Atmosphere:** Aerial perspective + sun controls + water bodies + cloud layer
-- **E — Capture:** RenderPipeline + bloom + exposure controls + async presentation snapshots
+- **E — Capture:** RenderPipeline + bloom + exposure + async presentation snapshots
+- **F1 — Production:** Bake/runtime seam + worker bake + OPFS cache + startup UX + domain config
+- **F2 — Authoring:** Lit shell + stores + document v1 + inspector + rebake workflow + persistence
 
 ## Key directories
+- `src/engine/bake/` — bake pipeline, worker, cache, domain config
 - `src/engine/terrain/` — terrain source, macro fields, erosion, stream-power, fan deposition, field textures
 - `src/engine/materials/` — TSL terrain materials, feature model
 - `src/engine/foliage/` — foliage system, rock geometry
@@ -28,14 +33,15 @@ High-quality procedural terrain generation running purely in the browser with Th
 - `src/engine/sky/` — procedural cloud layer
 - `src/engine/postprocess/` — presentation pipeline (bloom)
 - `src/engine/backend/` — WebGPU renderer backend
-- `src/ui/` — HUD, snapshot UI, DPR buttons
+- `src/stores/` — reactive stores (viewport, project, authoring, runtime)
+- `src/ui/shell/` — Lit editor shell, toolbar, inspector
 - `plans/` — architecture plans and research docs
 
 ## URL params
 - `?preset=chain|basin|plateau` — macro terrain preset
-- `?clay` — clay/shape debug mode (no textures, no foliage, no fog)
+- `?clay` — clay/shape debug mode
 - `?water=8` — water level in world units
-- `?present` — presentation mode (bloom + post-processing)
+- `?present` — presentation mode (bloom)
 - `?exposure=1.2` — tone mapping exposure
 - `?sunaz=210&sunel=35` — sun azimuth/elevation
 - `?debug` — enable debug access (`window.__app`)
