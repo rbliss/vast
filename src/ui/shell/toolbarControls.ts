@@ -14,6 +14,7 @@ export class ToolbarControls extends LitElement {
   @property({ type: Boolean }) presentMode = false;
   @property({ type: String }) overlayMode = 'none';
   @property({ type: String }) sunLabel = 'SW 35°';
+  @property({ type: String }) saveStatus = '';
 
   static styles = css`
     :host {
@@ -68,6 +69,12 @@ export class ToolbarControls extends LitElement {
       <div class="separator"></div>
 
       <button @click=${() => this._emit('take-snapshot')}>Snapshot</button>
+
+      <div class="separator"></div>
+
+      <button @click=${() => this._emit('save-project')}>Save</button>
+      <button @click=${() => this._emit('open-project')}>Open</button>
+      ${this.saveStatus ? html`<span style="color:#888; font-size:10px;">${this.saveStatus}</span>` : ''}
     `;
   }
 

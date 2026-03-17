@@ -15,8 +15,13 @@ import { TerrainApp } from './engine/TerrainApp';
 import { mustEl } from './engine/types';
 import { createHud } from './ui/hud';
 import { createScreenshotUi } from './ui/screenshotUi';
-import { createDefaultDocument } from './engine/document';
+import { createDefaultDocument, type WorldDocument } from './engine/document';
 import { createTerrainSource } from './engine/terrain/terrainSource';
+import {
+  autosave, loadAutosave,
+  saveDocument, openDocument,
+  exportDocumentJSON, importDocumentJSON,
+} from './engine/persistence';
 import type { EditorShell } from './ui/shell/editorShell';
 import type { ToolbarControls } from './ui/shell/toolbarControls';
 import { viewportStore } from './stores/viewportStore';
@@ -39,8 +44,16 @@ if (dprParam === 'auto') {
   if (v >= 1.0 && v <= Math.min(window.devicePixelRatio, 2)) dprInitial = v;
 }
 
-// ── Create world document and apply URL overrides ──
-const worldDoc = createDefaultDocument();
+// ── Create or restore world document ──
+let worldDoc: WorldDocument;
+const savedDraft = await loadAutosave();
+if (savedDraft && !params.has('preset')) {
+  worldDoc = savedDraft;
+  setStartupStatus('Restored autosaved draft');
+  console.log('[startup] restored autosaved draft');
+} else {
+  worldDoc = createDefaultDocument();
+}
 worldDoc.scene.dpr.mode = dprMode;
 worldDoc.scene.dpr.initial = dprInitial;
 
@@ -298,6 +311,74 @@ shell.addEventListener('rebake', (async () => {
     console.error('[rebake] failed:', err);
   }
 }) as EventListener);
+
+// ── Save / Open / Autosave ──
+shell.addEventListener('save-project', (async () => {
+  toolbar.saveStatus = 'Saving...';
+  const ok = await saveDocument(worldDoc);
+  if (ok) {
+    projectStore.setSaveStatus('clean');
+    toolbar.saveStatus = 'Saved';
+    setTimeout(() => { toolbar.saveStatus = ''; }, 2000);
+  } else {
+    // Try JSON export as fallback
+    exportDocumentJSON(worldDoc);
+    toolbar.saveStatus = 'Exported';
+    setTimeout(() => { toolbar.saveStatus = ''; }, 2000);
+  }
+}) as EventListener);
+
+shell.addEventListener('open-project', (async () => {
+  let doc: WorldDocument | null = null;
+  try {
+    doc = await openDocument();
+  } catch {
+    doc = await importDocumentJSON();
+  }
+  if (!doc) return;
+
+  // Apply loaded document
+  Object.assign(worldDoc, doc);
+  projectStore.setDocument(worldDoc);
+  projectStore.setPresetName(worldDoc.terrain.preset);
+  projectStore.setSaveStatus('clean');
+
+  // Update scene live state from loaded document
+  app.setSunDirection(worldDoc.scene.sun.azimuth, worldDoc.scene.sun.elevation);
+  app.setExposure(worldDoc.scene.exposure);
+  app.setCloudCoverage(worldDoc.scene.cloudCoverage);
+  app.setWaterLevel(worldDoc.scene.waterLevel);
+  app.setIblEnabled(worldDoc.scene.ibl);
+  viewportStore.setSunDirection(worldDoc.scene.sun.azimuth, worldDoc.scene.sun.elevation);
+  viewportStore.setExposure(worldDoc.scene.exposure);
+  viewportStore.setCloudCoverage(worldDoc.scene.cloudCoverage);
+  viewportStore.setWaterLevel(worldDoc.scene.waterLevel);
+  viewportStore.setIblEnabled(worldDoc.scene.ibl);
+
+  // Update inspector
+  const insp = document.getElementById('inspector') as any;
+  if (insp?.loadFromDocument) insp.loadFromDocument(worldDoc);
+
+  // Mark terrain for rebake (different preset/params)
+  authoringStore.setNeedsRebake(true);
+  syncToolbar();
+  shell.statusText = `Loaded: ${worldDoc.meta.name}`;
+}) as EventListener);
+
+// Autosave on dirty (debounced)
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+projectStore.subscribe(() => {
+  if (projectStore.saveStatus === 'dirty') {
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(async () => {
+      const ok = await autosave(worldDoc);
+      if (ok) {
+        toolbar.saveStatus = 'Draft saved';
+        setTimeout(() => { toolbar.saveStatus = ''; }, 1500);
+      }
+    }, 3000); // 3s debounce
+  }
+});
 
 // ── Apply document scene state to engine + stores ──
 app.setSunDirection(worldDoc.scene.sun.azimuth, worldDoc.scene.sun.elevation);
