@@ -11,6 +11,7 @@
 
 import type { TerrainBakeRequest, TerrainBakeArtifacts } from './types';
 import { executeBake } from './terrainBakePipeline';
+import { loadFromCache, saveToCache } from './bakeCache';
 
 // ── Progress events ──
 
@@ -26,23 +27,50 @@ export type BakeProgressCallback = (progress: BakeProgress) => void;
 // ── Manager ──
 
 /**
- * Run a terrain bake, preferring a worker if available.
+ * Run a terrain bake with cache-first strategy:
+ *   1. Check OPFS cache for matching artifacts
+ *   2. If miss, run bake in worker (or main-thread fallback)
+ *   3. Save result to cache
  *
  * @param request The bake request
- * @param onProgress Optional progress callback (called from worker messages)
+ * @param onProgress Optional progress callback
  * @returns Promise resolving to bake artifacts
  */
 export async function runBake(
   request: TerrainBakeRequest,
   onProgress?: BakeProgressCallback,
 ): Promise<TerrainBakeArtifacts> {
-  // Try worker path first
+  // Step 1: Check cache
   try {
-    return await runBakeInWorker(request, onProgress);
+    const cached = await loadFromCache(request);
+    if (cached.hit && cached.artifacts) {
+      onProgress?.({
+        stage: 'cache-hit',
+        stageIndex: 0,
+        totalStages: 1,
+        elapsedMs: 0,
+      });
+      return cached.artifacts;
+    }
+  } catch (err) {
+    console.warn('[bake] cache check failed:', err);
+  }
+
+  // Step 2: Compute (worker preferred)
+  let artifacts: TerrainBakeArtifacts;
+  try {
+    artifacts = await runBakeInWorker(request, onProgress);
   } catch (err) {
     console.warn('[bake] worker failed, falling back to main thread:', err);
-    return runBakeOnMainThread(request);
+    artifacts = runBakeOnMainThread(request);
   }
+
+  // Step 3: Save to cache (fire-and-forget)
+  saveToCache(request, artifacts).catch(err => {
+    console.warn('[bake] cache save failed:', err);
+  });
+
+  return artifacts;
 }
 
 /**
