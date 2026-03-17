@@ -228,6 +228,7 @@ function transportAndDeposit(
   area: Float32Array,
   receiver: Int32Array,
   slopes: Float32Array,
+  deposition: Float32Array,
   w: number, h: number, cellSize: number,
   transportK: number, transportAreaExp: number, transportSlopeExp: number,
   minSlope: number,
@@ -295,17 +296,22 @@ function transportAndDeposit(
 
           // Deposit at self
           grid[idx] += selfDeposit;
+          deposition[idx] += selfDeposit;
 
           // Spread fan deposit to lower neighbors proportionally
           for (let d = 0; d < drops.length; d++) {
-            grid[nIdxs[d]] += fanDeposit * (drops[d] / totalDrop);
+            const amount = fanDeposit * (drops[d] / totalDrop);
+            grid[nIdxs[d]] += amount;
+            deposition[nIdxs[d]] += amount;
           }
         } else {
           grid[idx] += deposit;
+          deposition[idx] += deposit;
         }
       } else {
         // Confined: deposit at self
         grid[idx] += deposit;
+        deposition[idx] += deposit;
       }
 
       sedimentFlux[idx] -= deposit;
@@ -338,6 +344,8 @@ export interface StreamPowerResult {
   area: Float32Array;
   receiver: Int32Array;
   slopes: Float32Array;
+  /** Accumulated deposition at each cell (total material deposited over all iterations) */
+  deposition: Float32Array;
 }
 
 export function streamPowerErosion(
@@ -352,6 +360,8 @@ export function streamPowerErosion(
   const n = w * h;
   // Sediment flux: how much sediment is being carried through each cell
   const sedimentFlux = depositionEnabled ? new Float32Array(n) : null;
+  // Accumulated deposition mask
+  const deposition = new Float32Array(n);
 
   let lastArea: Float32Array = new Float32Array(n);
   let lastReceiver: Int32Array = new Int32Array(n);
@@ -399,7 +409,7 @@ export function streamPowerErosion(
     // Route sediment downstream; deposit where transport capacity drops
     if (sedimentFlux) {
       transportAndDeposit(
-        grid, sedimentFlux, area, receiver, slopes,
+        grid, sedimentFlux, area, receiver, slopes, deposition,
         w, h, cellSize, transportK, transportAreaExp, transportSlopeExp, minSlope,
       );
     }
@@ -415,5 +425,5 @@ export function streamPowerErosion(
     }
   }
 
-  return { area: lastArea, receiver: lastReceiver, slopes: lastSlopes };
+  return { area: lastArea, receiver: lastReceiver, slopes: lastSlopes, deposition };
 }

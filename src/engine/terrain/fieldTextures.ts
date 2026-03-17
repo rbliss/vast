@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import type { TerrainSource } from './terrainSource';
 
 export interface FieldTextures {
-  /** RGBA float texture: R=slope, G=normalizedAltitude, B=curvature, A=localFlowProxy */
+  /** RGBA float texture: R=slope, G=normalizedAltitude, B=curvature, A=depositionOrFlow */
   fieldMap: THREE.DataTexture;
   /** World-space bounds of the field map */
   extent: number;
@@ -25,12 +25,15 @@ export interface FieldTextures {
 /**
  * Generate terrain field textures from a terrain source.
  * Samples the source over a grid and computes slope, altitude,
- * curvature, and local flow proxy.
+ * curvature. If a deposition map is available (from erosion),
+ * uses it for the alpha channel; otherwise falls back to local flow proxy.
  */
 export function generateFieldTextures(
   terrain: TerrainSource,
   gridSize: number,
   extent: number,
+  depositionMap?: Float32Array | null,
+  depositionGridSize?: number,
 ): FieldTextures {
   const n = gridSize;
   const cellSize = (extent * 2) / (n - 1);
@@ -118,15 +121,45 @@ export function generateFieldTextures(
     }
   }
 
-  // Write flow into alpha channel (log-scaled, normalized)
-  let maxFlow = 1;
-  for (let i = 0; i < n * n; i++) {
-    if (area[i] > maxFlow) maxFlow = area[i];
-  }
-  const logMaxFlow = Math.log2(maxFlow) || 1;
+  // Alpha channel: use explicit deposition map if available, otherwise local flow proxy
+  if (depositionMap && depositionGridSize) {
+    // Resample deposition map (may be different resolution than field grid)
+    let maxDep = 0;
+    for (let i = 0; i < depositionMap.length; i++) {
+      if (depositionMap[i] > maxDep) maxDep = depositionMap[i];
+    }
+    const depScale = maxDep > 0 ? 1 / maxDep : 0;
 
-  for (let i = 0; i < n * n; i++) {
-    data[i * 4 + 3] = Math.log2(area[i]) / logMaxFlow;
+    for (let z = 0; z < n; z++) {
+      for (let x = 0; x < n; x++) {
+        // Map field grid cell to deposition grid cell
+        const dx = (x / (n - 1)) * (depositionGridSize - 1);
+        const dz = (z / (n - 1)) * (depositionGridSize - 1);
+        const ix = Math.min(Math.floor(dx), depositionGridSize - 2);
+        const iz = Math.min(Math.floor(dz), depositionGridSize - 2);
+        const fx = dx - ix;
+        const fz = dz - iz;
+        const dn = depositionGridSize;
+        const d00 = depositionMap[iz * dn + ix];
+        const d10 = depositionMap[iz * dn + ix + 1];
+        const d01 = depositionMap[(iz + 1) * dn + ix];
+        const d11 = depositionMap[(iz + 1) * dn + ix + 1];
+        const dep = (d00 * (1 - fx) * (1 - fz) + d10 * fx * (1 - fz) +
+                     d01 * (1 - fx) * fz + d11 * fx * fz) * depScale;
+        data[(z * n + x) * 4 + 3] = dep;
+      }
+    }
+    console.log(`[fields] using explicit deposition map (max=${maxDep.toFixed(2)})`);
+  } else {
+    // Fallback: local flow proxy (log-scaled)
+    let maxFlow = 1;
+    for (let i = 0; i < n * n; i++) {
+      if (area[i] > maxFlow) maxFlow = area[i];
+    }
+    const logMaxFlow = Math.log2(maxFlow) || 1;
+    for (let i = 0; i < n * n; i++) {
+      data[i * 4 + 3] = Math.log2(area[i]) / logMaxFlow;
+    }
   }
 
   // Create DataTexture

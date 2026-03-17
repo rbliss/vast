@@ -74,7 +74,15 @@ export class TerrainApp {
     });
 
     // Generate field textures from the terrain source for material blending
-    const fieldTextures = generateFieldTextures(terrainSource, 256, 200);
+    // Use deposition map from erosion if available
+    const erodedSource = terrainSource as any;
+    const depositionMap = erodedSource.depositionMap ?? null;
+    const erosionGridSize = erodedSource._gridSize ?? null;
+    const erosionExtent = erodedSource._extent ?? 200;
+    const fieldTextures = generateFieldTextures(
+      terrainSource, 256, erosionExtent,
+      depositionMap, erosionGridSize,
+    );
 
     const { createNodeTerrainMaterials } = await import('./materials/terrainMaterialNode');
     return new TerrainApp(container, doc, terrainSource, opts, backend, renderer, reversedDepthSupported, createNodeTerrainMaterials, fieldTextures);

@@ -124,12 +124,12 @@ const fieldBiomeWeights = Fn(([wPos, wNorm, fieldTex, fieldExtent]: [any, any, a
   const rockFromAlt = smoothstep(float(0.6), float(0.8), fieldAlt).mul(0.4).mul(inField);
   const rock = max(rockFromSlope, rockFromAlt);
 
-  // ── Sediment: high flow + low slope + negative curvature (concave/depositional) ──
+  // ── Sediment: driven by explicit deposition mask (alpha channel) ──
   const flatness = float(1).sub(rock);
-  const sedimentFromFlow = smoothstep(float(0.3), float(0.6), fieldFlow).mul(inField);
-  const sedimentFromCurvature = smoothstep(float(-0.5), float(-2.0), fieldCurvature).mul(0.3).mul(inField);
+  // fieldFlow is now deposition amount (if available) or flow proxy
+  const sedimentFromDeposition = smoothstep(float(0.08), float(0.35), fieldFlow).mul(inField);
   const sedimentSlopeMask = smoothstep(float(0.3), float(0.1), slope);
-  const sediment = flatness.mul(sedimentFromFlow.add(sedimentFromCurvature)).mul(sedimentSlopeMask);
+  const sediment = flatness.mul(sedimentFromDeposition).mul(sedimentSlopeMask);
 
   // ── Grass: flat, mid altitude, not in wet channels ──
   const grassAlt = smoothstep(float(0.15), float(0.35), fieldAlt)
@@ -228,12 +228,12 @@ export function createNodeTerrainMaterials(
         // Grass
         const gc = texture(textures.grassDiff, wp.xz.mul(gr));
 
-        // Dirt + sediment blend: use flow field to mix between dirt texture and sediment color
+        // Dirt + sediment blend: use explicit deposition mask for alluvial identity
         const fieldUV = wp.xz.div(extentU.mul(2)).add(0.5);
-        const flow = texture(fieldMap, fieldUV).a;
-        const sedimentMix = smoothstep(float(0.45), float(0.7), flow);
+        const deposition = texture(fieldMap, fieldUV).a;
+        const sedimentMix = smoothstep(float(0.08), float(0.35), deposition);
         const dirtColor = texture(textures.dirtDiff, wp.xz.mul(dt));
-        const dc = mix(dirtColor, vec4(SEDIMENT_COLOR, 1.0), sedimentMix.mul(0.35));
+        const dc = mix(dirtColor, vec4(SEDIMENT_COLOR, 1.0), sedimentMix.mul(0.4));
 
         return rc.mul(bw.x).add(gc.mul(bw.y)).add(dc.mul(bw.z)).add(SNOW_COLOR.mul(bw.w));
       }
@@ -264,7 +264,8 @@ export function createNodeTerrainMaterials(
         // Dirt roughness blended with smoother sediment roughness
         const fieldUV = wp.xz.div(extentU.mul(2)).add(0.5);
         const flow = texture(fieldMap, fieldUV).a;
-        const sedimentMixR = smoothstep(float(0.45), float(0.7), flow);
+        const depositionR = texture(fieldMap, wp.xz.div(extentU.mul(2)).add(0.5)).a;
+        const sedimentMixR = smoothstep(float(0.08), float(0.35), depositionR);
         const dR = mix(texture(textures.dirtRough, wp.xz.mul(dt)).g, SEDIMENT_ROUGHNESS, sedimentMixR.mul(0.3));
         return rr.mul(bw.x).add(gR.mul(bw.y)).add(dR.mul(bw.z)).add(SNOW_ROUGHNESS.mul(bw.w));
       }

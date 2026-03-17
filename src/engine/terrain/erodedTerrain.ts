@@ -83,6 +83,8 @@ export class ErodedTerrainSource implements TerrainSource {
   private readonly _cellSize: number;
   private readonly _blendStart: number;
   private readonly _computeTimeMs: number;
+  /** Accumulated deposition map from stream-power erosion (null if erosion disabled) */
+  readonly depositionMap: Float32Array | null;
 
   constructor(base: TerrainSource, config: ErosionConfig = DEFAULT_EROSION) {
     this._base = base;
@@ -105,12 +107,13 @@ export class ErodedTerrainSource implements TerrainSource {
     }
 
     // Step 2: Stream-power erosion (primary — creates hierarchical channels)
-    let spResult: { area: Float32Array; receiver: Int32Array; slopes: Float32Array } | null = null;
+    let spResult: import('./streamPower').StreamPowerResult | null = null;
     if (config.streamPower.enabled) {
       const spT0 = performance.now();
       spResult = streamPowerErosion(this._grid, n, n, this._cellSize, config.streamPower);
       console.log(`[erosion] stream-power: ${config.streamPower.iterations} iterations (${(performance.now() - spT0).toFixed(0)}ms)`);
     }
+    this.depositionMap = spResult?.deposition ?? null;
 
     // Step 2b: Fan and debris-flow deposition (uses flow data from stream-power)
     if (config.fan.enabled && spResult) {
