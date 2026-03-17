@@ -22,7 +22,8 @@ let rendererMode: 'webgl' | 'webgpu';
 if (rendererParam === 'webgl' || rendererParam === 'webgpu') {
   rendererMode = rendererParam;
 } else {
-  rendererMode = localStorage.getItem('terrain-renderer') as 'webgl' | 'webgpu' || 'webgpu';
+  const stored = localStorage.getItem('terrain-renderer');
+  rendererMode = stored === 'webgl' || stored === 'webgpu' ? stored : 'webgpu';
 }
 let dprMode: 'fixed' | 'auto' = 'fixed';
 let dprInitial = 2;
