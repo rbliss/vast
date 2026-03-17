@@ -10,7 +10,6 @@ export interface TerrainAppOptions {
   debug?: boolean;
   dprMode?: 'fixed' | 'auto';
   dprInitial?: number;
-  rendererMode?: 'webgl' | 'webgpu';
 }
 
 export interface TerrainUpdateResult {

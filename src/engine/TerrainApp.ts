@@ -1,7 +1,6 @@
 /**
  * TerrainApp: top-level engine facade.
- * Framework-agnostic — no DOM creation, no UI knowledge.
- * Uses a RendererBackend to abstract WebGL vs WebGPU differences.
+ * WebGPU-only — uses TSL node materials.
  */
 
 import * as THREE from 'three';
@@ -9,13 +8,12 @@ import type { WebGLRenderer, Scene, PerspectiveCamera, MeshStandardMaterial } fr
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, TextureSet, TerrainMaterials } from './types';
 import type { DprController } from './controls/dprController';
-import type { RendererBackend, RendererMode } from './backend/types';
+import type { RendererBackend } from './backend/types';
 
 import { getBackend } from './backend';
 import { createOrbitMovement } from './controls/orbitMovement';
 import { createDprController } from './controls/dprController';
 import { loadTextureSet } from './materials/textureSet';
-import { createTerrainMaterials } from './materials/terrainMaterial';
 import { createChunkSlot, rebuildChunkSlot, lodForRingPos } from './terrain/chunkGeometry';
 import { createFoliageSystem } from './foliage/foliageSystem';
 import {
@@ -30,7 +28,6 @@ export class TerrainApp {
   readonly debug: boolean;
   readonly renderer: WebGLRenderer;
   readonly reversedDepthSupported: boolean;
-  readonly rendererMode: RendererMode;
   readonly scene: Scene;
   readonly camera: PerspectiveCamera;
   readonly controls: OrbitControls;
@@ -53,21 +50,15 @@ export class TerrainApp {
   private _coverageMode: 'base' | 'shallow' | 'horizon';
   private _activeRadius: number;
 
-  /** Async factory — resolves backend + lazy material imports. */
+  /** Async factory — initializes WebGPU backend + TSL materials. */
   static async createAsync(container: HTMLElement, opts: TerrainAppOptions = {}): Promise<TerrainApp> {
-    const backend = await getBackend(opts.rendererMode || 'webgl');
+    const backend = await getBackend();
     const { renderer, reversedDepthSupported } = await backend.createRenderer({
       preserveDrawingBuffer: opts.debug,
     });
 
-    // Lazy-load WebGPU material only when needed (keeps main bundle smaller)
-    let materialFactory: ((textures: TextureSet) => TerrainMaterials) | undefined;
-    if (backend.mode === 'webgpu') {
-      const { createNodeTerrainMaterials } = await import('./materials/terrainMaterialNode');
-      materialFactory = createNodeTerrainMaterials;
-    }
-
-    return new TerrainApp(container, opts, backend, renderer, reversedDepthSupported, materialFactory);
+    const { createNodeTerrainMaterials } = await import('./materials/terrainMaterialNode');
+    return new TerrainApp(container, opts, backend, renderer, reversedDepthSupported, createNodeTerrainMaterials);
   }
 
   private constructor(
@@ -76,15 +67,13 @@ export class TerrainApp {
     backend: RendererBackend,
     renderer: WebGLRenderer,
     reversedDepthSupported: boolean,
-    webgpuMaterialFactory?: (textures: TextureSet) => TerrainMaterials,
+    materialFactory: (textures: TextureSet) => TerrainMaterials,
   ) {
     this.debug = opts.debug || false;
     this._backend = backend;
-    this.rendererMode = backend.mode;
     this.renderer = renderer;
     this.reversedDepthSupported = reversedDepthSupported;
 
-    // All scene primitives come from the backend — no renderer-specific branching here
     this.scene = backend.createScene() as Scene;
     this.camera = backend.createCamera(window.innerWidth / window.innerHeight) as PerspectiveCamera;
     const lighting = backend.createLighting(this.scene);
@@ -109,11 +98,9 @@ export class TerrainApp {
     this.controls = controls;
     this._applyMovement = applyMovement;
 
-    // Materials — backend-specific
+    // Materials — TSL/WebGPU
     this.textures = loadTextureSet(this.renderer);
-    const { matDisp, matNoDisp } = webgpuMaterialFactory
-      ? webgpuMaterialFactory(this.textures)
-      : createTerrainMaterials(this.textures);
+    const { matDisp, matNoDisp } = materialFactory(this.textures);
     if (this._envMap) {
       matDisp.envMap = this._envMap;
       matDisp.envMapIntensity = TERRAIN_ENV_MAP_INTENSITY;
@@ -126,7 +113,7 @@ export class TerrainApp {
     // Foliage
     this.foliage = createFoliageSystem(this.scene, FOLIAGE_ENV_INTENSITY);
 
-    // Chunk pool — preallocate horizon radius, activate based on camera state
+    // Chunk pool
     this.slots = [];
     this.centerCX = Infinity;
     this.centerCZ = Infinity;
@@ -140,7 +127,6 @@ export class TerrainApp {
   }
 
   // ── IBL toggle ──
-  // Hemi intensity values from shared feature model
 
   isIblEnabled(): boolean { return this._iblEnabled; }
 
@@ -185,7 +171,6 @@ export class TerrainApp {
     for (const slot of this.slots) {
       if (rebuildChunkSlot(slot, this.centerCX, this.centerCZ)) {
         const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
-        // Foliage only for near/mid rings (d < 2)
         this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= BASE_GRID_RADIUS);
         rebuilt++;
       }
@@ -195,7 +180,6 @@ export class TerrainApp {
     }
   }
 
-  /** Compute coverage mode from camera state. */
   private _computeCoverageMode(): { mode: 'base' | 'shallow' | 'horizon'; radius: number } {
     const dir = this.controls.target.clone().sub(this.camera.position);
     const distance = dir.length();
@@ -203,21 +187,17 @@ export class TerrainApp {
     const absPitch = Math.abs(Math.asin(Math.max(-1, Math.min(1, dir.y))) * (180 / Math.PI));
     const heightAboveTarget = this.camera.position.y - this.controls.target.y;
 
-    // Horizon mode: very shallow + far/high
     if (absPitch < HORIZON_PITCH_THRESHOLD &&
         (distance > HORIZON_DISTANCE_THRESHOLD || heightAboveTarget > HORIZON_HEIGHT_THRESHOLD)) {
       return { mode: 'horizon', radius: HORIZON_GRID_RADIUS };
     }
-    // Shallow mode: moderately shallow
     if (absPitch < SHALLOW_PITCH_THRESHOLD) {
       return { mode: 'shallow', radius: SHALLOW_GRID_RADIUS };
     }
     return { mode: 'base', radius: BASE_GRID_RADIUS };
   }
 
-  /** Show/hide slots based on coverage mode + forward-biased horizon ring. */
   private _updateSlotVisibility(): void {
-    // Compute forward direction in XZ plane for horizon bias
     const dir = this.controls.target.clone().sub(this.camera.position);
     dir.y = 0;
     const dirLen = dir.length();
@@ -227,21 +207,18 @@ export class TerrainApp {
       const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
 
       if (d <= SHALLOW_GRID_RADIUS) {
-        // Rings 0-3: visible if within active radius
         const visible = d <= this._activeRadius;
         slot.mesh.visible = visible;
         slot.foliage.grass.visible = visible;
         slot.foliage.rock.visible = visible;
         slot.foliage.shrub.visible = visible;
       } else {
-        // Horizon ring (d=4): forward-biased visibility
         if (this._coverageMode !== 'horizon') {
           slot.mesh.visible = false;
           slot.foliage.grass.visible = false;
           slot.foliage.rock.visible = false;
           slot.foliage.shrub.visible = false;
         } else {
-          // Compute dot product of camera forward XZ vs chunk direction XZ
           const toChunkX = slot.dx;
           const toChunkZ = slot.dz;
           const toChunkLen = Math.sqrt(toChunkX * toChunkX + toChunkZ * toChunkZ) || 1;
@@ -264,14 +241,12 @@ export class TerrainApp {
     this._applyMovement(dt);
     this.controls.update();
 
-    // Coverage mode check — updates visibility when mode or direction changes
     const { mode, radius } = this._computeCoverageMode();
     if (mode !== this._coverageMode || radius !== this._activeRadius) {
       this._coverageMode = mode;
       this._activeRadius = radius;
       this._updateSlotVisibility();
     } else if (mode === 'horizon') {
-      // In horizon mode, forward direction may change each frame
       this._updateSlotVisibility();
     }
 
@@ -288,34 +263,19 @@ export class TerrainApp {
     this.renderer.setSize(w, h);
   }
 
-  /** Renderer-agnostic frame capture via backend. */
   captureFrame(): string {
     this.controls.update();
     this.updateChunks();
     return this._backend.captureFrame(this.renderer, this.scene, this.camera);
   }
 
-  /**
-   * Snapshot state — returns a plain JSON-safe object describing the
-   * current engine/app runtime state. This is the "game state" for
-   * the terrain playground (no formal gameplay yet).
-   */
   getSnapshotState(): Record<string, unknown> {
     const cam = this.camera;
     const tgt = this.controls.target;
 
-    // Direction from camera to target
     const dir = tgt.clone().sub(cam.position).normalize();
-
-    // Yaw: angle of XZ direction from +Z axis (degrees)
-    const yawRad = Math.atan2(dir.x, dir.z);
-    const yawDeg = yawRad * (180 / Math.PI);
-
-    // Pitch: angle above/below horizon (degrees)
-    const pitchRad = Math.asin(Math.max(-1, Math.min(1, dir.y)));
-    const pitchDeg = pitchRad * (180 / Math.PI);
-
-    // Orbit distance
+    const yawDeg = Math.atan2(dir.x, dir.z) * (180 / Math.PI);
+    const pitchDeg = Math.asin(Math.max(-1, Math.min(1, dir.y))) * (180 / Math.PI);
     const distance = cam.position.distanceTo(tgt);
 
     return {
@@ -337,7 +297,7 @@ export class TerrainApp {
         coverageMode: this._coverageMode,
       },
       app: {
-        rendererMode: this.rendererMode,
+        renderer: 'webgpu',
         reversedDepthSupported: this.reversedDepthSupported,
         iblEnabled: this._iblEnabled,
         dpr: { mode: this.dpr.ctrl.mode, current: this.dpr.ctrl.current },
@@ -345,10 +305,9 @@ export class TerrainApp {
         url: location.href,
         query: Object.fromEntries(new URLSearchParams(location.search)),
       },
-      // Current runtime state — "game state" for the terrain playground
       gameState: {
         description: 'Terrain playground runtime snapshot — no formal gameplay state yet',
-        rendererMode: this.rendererMode,
+        renderer: 'webgpu',
         iblEnabled: this._iblEnabled,
         dpr: this.dpr.ctrl.current,
         centerCell: { x: this.centerCX, z: this.centerCZ },

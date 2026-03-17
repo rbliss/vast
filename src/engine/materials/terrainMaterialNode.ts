@@ -67,7 +67,7 @@ const biomeWeights = Fn(([wPos, wNorm]: [any, any]) => {
 });
 
 // Rock tri-planar normal with Whiteout blending (Golus method)
-// Matches WebGL path: normal scale + axis-sign correction + world-space output
+// Normal scale + axis-sign correction + world-space output
 const triplanarRockNormal = Fn(([tex, wPos, wNorm, scale]: [any, any, any, any]) => {
   const axisSign = sign(wNorm);
   const w = pow(abs(wNorm), vec3(TRIPLANAR_SHARPNESS));
@@ -79,7 +79,7 @@ const triplanarRockNormal = Fn(([tex, wPos, wNorm, scale]: [any, any, any, any])
   const tnY = texture(tex, wPos.xz.mul(scale)).xyz.mul(2).sub(1);
   const tnZ = texture(tex, wPos.xy.mul(scale)).xyz.mul(2).sub(1);
 
-  // Apply normal scale to XY + axis-sign correction (matching WebGL path)
+  // Apply normal scale to XY + axis-sign correction
   const tnXc = vec3(tnX.x.mul(ns).mul(axisSign.x), tnX.y.mul(ns), tnX.z);
   const tnYc = vec3(tnY.x.mul(ns).mul(axisSign.y), tnY.y.mul(ns), tnY.z);
   const tnZc = vec3(tnZ.x.mul(ns).mul(axisSign.z).negate(), tnZ.y.mul(ns), tnZ.z);

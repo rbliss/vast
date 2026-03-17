@@ -45,8 +45,6 @@ function assertGpu(): GpuModule {
 }
 
 export const webgpuBackend: RendererBackend = {
-  mode: 'webgpu',
-
   async createRenderer(opts = {}) {
     const { default: WebGPU } = await import('three/examples/jsm/capabilities/WebGPU.js');
     if (!(WebGPU as { isAvailable(): boolean }).isAvailable()) {

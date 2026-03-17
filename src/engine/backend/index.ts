@@ -1,21 +1,12 @@
 /**
- * Backend factory — returns the appropriate renderer backend.
+ * Backend factory — WebGPU only.
  */
 
-import type { RendererBackend, RendererMode } from './types';
-import { webglBackend } from './webglBackend';
+import type { RendererBackend } from './types';
 
-export type { RendererBackend, RendererMode };
+export type { RendererBackend };
 
-export async function getBackend(mode: RendererMode): Promise<RendererBackend> {
-  if (mode === 'webgpu') {
-    try {
-      const { webgpuBackend } = await import('./webgpuBackend');
-      return webgpuBackend;
-    } catch (err) {
-      console.warn('[backend] WebGPU not available, falling back to WebGL:', err);
-      return webglBackend;
-    }
-  }
-  return webglBackend;
+export async function getBackend(): Promise<RendererBackend> {
+  const { webgpuBackend } = await import('./webgpuBackend');
+  return webgpuBackend;
 }

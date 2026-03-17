@@ -1,14 +1,16 @@
 /**
  * Renderer backend interface.
- * TerrainApp consumes this — never imports three vs three/webgpu directly.
+ * TerrainApp consumes this — never imports three/webgpu directly.
+ *
+ * Note: renderer type uses three's WebGLRenderer as a duck-type base
+ * since WebGPURenderer shares the same interface shape. This is a
+ * pragmatic type alias, not an actual WebGL dependency.
  */
 
 import type { WebGLRenderer, Scene, PerspectiveCamera, DirectionalLight, HemisphereLight, Texture } from 'three';
 
-export type RendererMode = 'webgl' | 'webgpu';
-
 export interface BackendRenderer {
-  /** The three.js renderer instance (WebGLRenderer or WebGPURenderer duck-typed) */
+  /** The three.js renderer instance (WebGPURenderer duck-typed as WebGLRenderer) */
   renderer: WebGLRenderer;
   /** Whether reversed depth buffer is active */
   reversedDepthSupported: boolean;
@@ -27,8 +29,6 @@ export interface BackendEnvironment {
 }
 
 export interface RendererBackend {
-  readonly mode: RendererMode;
-
   createRenderer(opts?: { preserveDrawingBuffer?: boolean }): Promise<BackendRenderer>;
   createScene(): Scene;
   createCamera(aspect: number): PerspectiveCamera;

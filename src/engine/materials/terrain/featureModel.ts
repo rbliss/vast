@@ -1,7 +1,7 @@
 /**
  * Shared terrain shader feature model.
  * Single source of truth for all biome/material behavior constants.
- * Consumed by both WebGL (onBeforeCompile) and WebGPU (TSL) material paths.
+ * Consumed by the TSL/WebGPU material path.
  *
  * This is pure config/math semantics — no renderer code.
  */

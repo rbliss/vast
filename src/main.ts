@@ -18,15 +18,6 @@ const params = new URLSearchParams(location.search);
 const debugMode = params.has('debug');
 const dprParam = params.get('dpr');
 
-// Renderer selection: explicit param > localStorage > default (webgpu-first)
-const rendererParam = params.get('renderer');
-let rendererMode: 'webgl' | 'webgpu';
-if (rendererParam === 'webgl' || rendererParam === 'webgpu') {
-  rendererMode = rendererParam;
-} else {
-  const stored = localStorage.getItem('terrain-renderer');
-  rendererMode = stored === 'webgl' || stored === 'webgpu' ? stored : 'webgpu';
-}
 let dprMode: 'fixed' | 'auto' = 'fixed';
 let dprInitial = 2;
 if (dprParam === 'auto') {
@@ -37,12 +28,11 @@ if (dprParam === 'auto') {
   if (v >= 1.0 && v <= Math.min(window.devicePixelRatio, 2)) dprInitial = v;
 }
 
-// ── Create engine (async for WebGPU support) ──
+// ── Create engine (WebGPU) ──
 const app = await TerrainApp.createAsync(document.body, {
   debug: debugMode,
   dprMode,
   dprInitial,
-  rendererMode,
 });
 
 // ── Wire UI ──
@@ -64,10 +54,7 @@ const snapshotUi = createScreenshotUi(
 // Expose snapshot API globally for automation / browser console
 window.__snapshot = snapshotUi.take;
 
-const hud = createHud(mustEl('fps'), {
-  reversedDepth: app.reversedDepthSupported,
-  rendererMode: app.rendererMode,
-});
+const hud = createHud(mustEl('fps'));
 
 // ── IBL toggle ──
 const iblBtn = mustEl<HTMLButtonElement>('iblBtn');
@@ -90,35 +77,6 @@ iblBtn.addEventListener('click', () => {
   updateIblButton();
 });
 updateIblButton();
-
-// ── Renderer toggle (reload-based) ──
-const rendererRow = mustEl('rendererRow');
-const rendererButtons = rendererRow.querySelectorAll<HTMLButtonElement>('button[data-renderer]');
-
-// Show fallback notice if WebGPU was requested but unavailable
-if (rendererMode === 'webgpu' && app.rendererMode === 'webgl') {
-  const notice = document.createElement('span');
-  notice.style.cssText = 'color:#fbbf24;font:10px/1 monospace;margin-left:4px';
-  notice.textContent = '(WebGPU unavailable)';
-  rendererRow.appendChild(notice);
-}
-
-// Highlight active renderer
-rendererButtons.forEach(btn => {
-  btn.classList.toggle('active', btn.dataset.renderer === app.rendererMode);
-});
-
-// Save preference + reload on click
-rendererButtons.forEach(btn => {
-  btn.addEventListener('click', () => {
-    const target = btn.dataset.renderer as 'webgl' | 'webgpu';
-    if (target === app.rendererMode) return;
-    localStorage.setItem('terrain-renderer', target);
-    const p = new URLSearchParams(location.search);
-    p.set('renderer', target);
-    location.search = p.toString();
-  });
-});
 
 // ── Resize ──
 window.addEventListener('resize', () => {
@@ -146,4 +104,4 @@ function animate() {
 }
 
 animate();
-console.log(`[terrain] spike — renderer: ${app.rendererMode}, revZ: ${app.reversedDepthSupported}, IBL: ${app.isIblEnabled()}`);
+console.log(`[terrain] WebGPU | revZ: ${app.reversedDepthSupported} | IBL: ${app.isIblEnabled()}`);
