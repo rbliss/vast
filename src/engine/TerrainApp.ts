@@ -16,6 +16,7 @@ import { generateFieldTextures, type FieldTextures } from './terrain/fieldTextur
 import { sunWarmthUniform } from './materials/terrainMaterialNode';
 import { createWaterSystem, type WaterSystem, type WaterConfig, DEFAULT_WATER_CONFIG } from './water/waterSystem';
 import { createCloudSystem, type CloudSystem } from './sky/cloudLayer';
+import { createPresentationPipeline, type PresentationPipeline } from './postprocess/presentationPipeline';
 
 import { getBackend } from './backend';
 import { createOrbitMovement } from './controls/orbitMovement';
@@ -63,6 +64,8 @@ export class TerrainApp {
   private _water: WaterSystem | null;
   private _clouds: CloudSystem | null;
   private _exposure: number;
+  private _presentationPipeline: PresentationPipeline | null;
+  private _presentationMode: boolean;
   private _clayMatDisp: MeshStandardMaterial | null;
   private _clayMatNoDisp: MeshStandardMaterial | null;
   private _overlayMode: OverlayMode;
@@ -183,8 +186,10 @@ export class TerrainApp {
     // Clouds
     this._clouds = createCloudSystem(this.scene as any);
 
-    // Exposure
+    // Exposure + presentation
     this._exposure = 1.0;
+    this._presentationPipeline = null;
+    this._presentationMode = false;
 
     // Chunk pool
     this.slots = [];
@@ -353,6 +358,17 @@ export class TerrainApp {
     (this.renderer as any).toneMappingExposure = this._exposure;
   }
 
+  // ── Presentation mode (bloom + post) ──
+
+  isPresentationMode(): boolean { return this._presentationMode; }
+
+  async setPresentationMode(enabled: boolean): Promise<void> {
+    this._presentationMode = enabled;
+    if (enabled && !this._presentationPipeline) {
+      this._presentationPipeline = await createPresentationPipeline(this.renderer);
+    }
+  }
+
   private _buildSlots(): void {
     for (let dz = -HORIZON_GRID_RADIUS; dz <= HORIZON_GRID_RADIUS; dz++) {
       for (let dx = -HORIZON_GRID_RADIUS; dx <= HORIZON_GRID_RADIUS; dx++) {
@@ -470,7 +486,11 @@ export class TerrainApp {
       this._sunDirectionVector().multiplyScalar(100)
     );
 
-    this.renderer.render(this.scene, this.camera);
+    if (this._presentationMode && this._presentationPipeline) {
+      this._presentationPipeline.render(this.scene, this.camera);
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
 
     return { now, dt };
   }

@@ -32,6 +32,16 @@ canvas { display: block; }
   border-color: rgba(100,160,255,0.5);
 }
 
+#presentBtn {
+  border: 0; border-radius: 6px; padding: 6px 12px;
+  font: 12px/1 monospace; background: rgba(40,40,40,0.7);
+  color: #aaa; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+#presentBtn:hover { background: rgba(60,60,60,0.85); }
+#presentBtn.active {
+  background: rgba(200,160,60,0.8); color: #fff;
+}
+
 #sunBtn {
   border: 0; border-radius: 6px; padding: 6px 12px;
   font: 12px/1 monospace; background: rgba(40,40,40,0.7);

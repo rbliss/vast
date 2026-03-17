@@ -75,6 +75,25 @@ window.__snapshot = snapshotUi.take;
 
 const hud = createHud(mustEl('fps'));
 
+// ── Presentation mode (bloom + post) ──
+const presentBtn = mustEl<HTMLButtonElement>('presentBtn');
+const presentParam = params.has('present');
+
+function updatePresentBtn() {
+  const on = app.isPresentationMode();
+  presentBtn.textContent = on ? 'Present On' : 'Present';
+  presentBtn.classList.toggle('active', on);
+}
+
+presentBtn.addEventListener('click', async () => {
+  await app.setPresentationMode(!app.isPresentationMode());
+  updatePresentBtn();
+});
+
+if (presentParam) {
+  app.setPresentationMode(true).then(updatePresentBtn);
+}
+
 // ── Exposure control ──
 const exposureParam = params.get('exposure');
 if (exposureParam) {
