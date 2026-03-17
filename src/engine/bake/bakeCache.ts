@@ -11,7 +11,7 @@
 import type { TerrainBakeRequest, TerrainBakeArtifacts, TerrainBakeMetadata } from './types';
 
 // ── Cache version: bump to invalidate all cached bakes ──
-const CACHE_VERSION = 'v7-mesa-preserve';
+const CACHE_VERSION = 'v8-terraces';
 
 // ── Cache key generation ──
 

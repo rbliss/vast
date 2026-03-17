@@ -16,6 +16,7 @@ import { streamPowerErosion } from '../terrain/streamPower';
 import { applyChannelGeometry } from '../terrain/channelGeometry';
 import { applyHillslopeTransport } from '../terrain/hillslopeTransport';
 import { applyFanDeposition } from '../terrain/fanDeposition';
+import { applyTerraceFormation } from '../terrain/terraceFormation';
 import { generateResistanceGrid } from '../terrain/resistanceField';
 
 // ── Progress reporting ──
@@ -78,6 +79,21 @@ function executeBakeInWorker(request: TerrainBakeRequest): TerrainBakeArtifacts 
   // Stage 2c: Hillslope transport (resistance-aware)
   const postResistance = generateResistanceGrid(grid, n, n, extent, cellSize);
   applyHillslopeTransport(grid, n, n, cellSize, undefined, postResistance);
+
+  // Stage 2d: Terraces
+  if (spResult) {
+    const inv2cs = 1 / (2 * cellSize);
+    const terrSlopes = new Float32Array(n * n);
+    for (let z = 1; z < n - 1; z++) {
+      for (let x = 1; x < n - 1; x++) {
+        const idx = z * n + x;
+        const dhdx = (grid[idx + 1] - grid[idx - 1]) * inv2cs;
+        const dhdz = (grid[idx + n] - grid[idx - n]) * inv2cs;
+        terrSlopes[idx] = Math.sqrt(dhdx * dhdx + dhdz * dhdz);
+      }
+    }
+    applyTerraceFormation(grid, spResult.area, terrSlopes, n, n, cellSize);
+  }
 
   // Stage 3: Fan/debris
   reportProgress('fan-deposition', t0);
