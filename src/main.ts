@@ -432,6 +432,67 @@ if (debugMode) {
   window.__scene = app.scene;
 }
 
+// ── Review harness: window.__reviewCapture() ──
+import { REVIEW_PRESETS, computeReviewCamera } from './engine/reviewHarness';
+
+/** Capture all review views for the current preset in clay mode */
+(window as any).__reviewCapture = async function(presetName?: string) {
+  const preset = presetName || worldDoc.terrain.preset || 'chain';
+  const reviewPreset = REVIEW_PRESETS.find(p => p.preset === preset);
+  if (!reviewPreset) {
+    console.error(`[review] no review preset for: ${preset}`);
+    return;
+  }
+
+  // Enable clay mode
+  const wasClay = app.isClayMode();
+  if (!wasClay) app.setClayMode(true);
+
+  console.log(`[review] capturing ${reviewPreset.views.length} views for "${preset}"`);
+
+  for (const view of reviewPreset.views) {
+    const { camPos, tgtPos } = computeReviewCamera(view, app.terrain);
+    app.camera.position.set(...camPos);
+    app.controls.target.set(...tgtPos);
+    app.controls.update();
+
+    // Wait for render
+    await new Promise(r => setTimeout(r, 500));
+    app.update();
+    await new Promise(r => setTimeout(r, 500));
+
+    const image = await app.captureFrame();
+    const label = view.name;
+
+    // Upload via snapshot API
+    const metadata = {
+      ...app.getSnapshotState(),
+      reviewView: view.name,
+      reviewJudges: view.judges,
+      reviewPreset: preset,
+      clayMode: true,
+    };
+
+    try {
+      const resp = await fetch('/api/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image, label, format: 'png', metadata }),
+      });
+      if (resp.ok) {
+        const result = await resp.json();
+        console.log(`[review] ${view.name}: ${result.id} — judges: ${view.judges}`);
+      }
+    } catch (err) {
+      console.error(`[review] ${view.name} failed:`, err);
+    }
+  }
+
+  // Restore clay state
+  if (!wasClay) app.setClayMode(false);
+  console.log(`[review] done`);
+};
+
 // ── Animate ──
 function animate() {
   requestAnimationFrame(animate);
