@@ -15,6 +15,7 @@ import { applyDebugOverlay, type OverlayMode } from './terrain/debugOverlay';
 import { generateFieldTextures, type FieldTextures } from './terrain/fieldTextures';
 import { sunWarmthUniform } from './materials/terrainMaterialNode';
 import { createWaterSystem, type WaterSystem, type WaterConfig, DEFAULT_WATER_CONFIG } from './water/waterSystem';
+import { createCloudSystem, type CloudSystem } from './sky/cloudLayer';
 
 import { getBackend } from './backend';
 import { createOrbitMovement } from './controls/orbitMovement';
@@ -60,6 +61,7 @@ export class TerrainApp {
   private _coverageMode: 'base' | 'shallow' | 'horizon';
   private _activeRadius: number;
   private _water: WaterSystem | null;
+  private _clouds: CloudSystem | null;
   private _clayMatDisp: MeshStandardMaterial | null;
   private _clayMatNoDisp: MeshStandardMaterial | null;
   private _overlayMode: OverlayMode;
@@ -176,6 +178,9 @@ export class TerrainApp {
     } else {
       this._water = null;
     }
+
+    // Clouds
+    this._clouds = createCloudSystem(this.scene as any);
 
     // Chunk pool
     this.slots = [];
