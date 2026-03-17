@@ -52,6 +52,7 @@ export function applyHillslopeTransport(
   w: number, h: number,
   cellSize: number,
   params: HillslopeParams = DEFAULT_HILLSLOPE_PARAMS,
+  resistance?: Float32Array,
 ): void {
   const n = w * h;
   const maxDh = params.criticalSlope * cellSize;
@@ -93,8 +94,9 @@ export function applyHillslopeTransport(
 
         if (totalExcess <= 0) continue;
 
-        // Transfer material proportionally to excess
-        const transfer = maxExcess * params.transferRate;
+        // Transfer material proportionally to excess, scaled by erodibility
+        const R = resistance ? resistance[idx] : 1.0;
+        const transfer = maxExcess * params.transferRate * R;
 
         for (let i = 0; i < excessDirs.length; i++) {
           const d = excessDirs[i];

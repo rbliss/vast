@@ -418,6 +418,7 @@ export interface StreamPowerResult {
 export function streamPowerErosion(
   grid: Float32Array, w: number, h: number,
   cellSize: number, params: StreamPowerParams,
+  resistance?: Float32Array,
 ): StreamPowerResult {
   const { iterations, erosionK, areaExponent, slopeExponent, dt,
           diffusionRate, minSlope, upliftRate, maxErosion,
@@ -454,9 +455,10 @@ export function streamPowerErosion(
         const A = area[idx];
         const S = Math.max(slopes[idx], minSlope);
 
-        // E = K * A^m * S^n, capped to prevent runaway deep incision
+        // E = K * R * A^m * S^n, where R = resistance (0-1 erodibility)
+        const R = resistance ? resistance[idx] : 1.0;
         const erosion = Math.min(
-          erosionK * Math.pow(A, areaExponent) * Math.pow(S, slopeExponent),
+          erosionK * R * Math.pow(A, areaExponent) * Math.pow(S, slopeExponent),
           maxErosion,
         );
         const eroded = dt * erosion;

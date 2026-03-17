@@ -16,6 +16,7 @@ import { streamPowerErosion } from '../terrain/streamPower';
 import { applyChannelGeometry } from '../terrain/channelGeometry';
 import { applyHillslopeTransport } from '../terrain/hillslopeTransport';
 import { applyFanDeposition } from '../terrain/fanDeposition';
+import { generateResistanceGrid } from '../terrain/resistanceField';
 
 // ── Progress reporting ──
 
@@ -57,13 +58,16 @@ function executeBakeInWorker(request: TerrainBakeRequest): TerrainBakeArtifacts 
   }
   const tSample = performance.now() - tSample0;
 
-  // Stage 2: Stream-power
+  // Stage 1b: Resistance field
+  const resistance = generateResistanceGrid(grid, n, n, extent, cellSize);
+
+  // Stage 2: Stream-power (resistance-aware)
   reportProgress('stream-power', t0);
   let spResult: ReturnType<typeof streamPowerErosion> | null = null;
   let tStreamPower = 0;
   if (erosion.streamPower.enabled) {
     const t = performance.now();
-    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower);
+    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower, resistance);
     tStreamPower = performance.now() - t;
   }
 
@@ -72,8 +76,9 @@ function executeBakeInWorker(request: TerrainBakeRequest): TerrainBakeArtifacts 
     applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize);
   }
 
-  // Stage 2c: Hillslope transport
-  applyHillslopeTransport(grid, n, n, cellSize);
+  // Stage 2c: Hillslope transport (resistance-aware)
+  const postResistance = generateResistanceGrid(grid, n, n, extent, cellSize);
+  applyHillslopeTransport(grid, n, n, cellSize, undefined, postResistance);
 
   // Stage 3: Fan/debris
   reportProgress('fan-deposition', t0);

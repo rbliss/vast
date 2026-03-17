@@ -12,6 +12,7 @@ import { streamPowerErosion } from '../terrain/streamPower';
 import { applyChannelGeometry } from '../terrain/channelGeometry';
 import { applyHillslopeTransport } from '../terrain/hillslopeTransport';
 import { applyFanDeposition } from '../terrain/fanDeposition';
+import { generateResistanceGrid } from '../terrain/resistanceField';
 
 /**
  * Execute the full terrain bake pipeline synchronously.
@@ -45,12 +46,16 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
   }
   const tSample = performance.now() - tSample0;
 
-  // ── Stage 2: Stream-power erosion ──
+  // ── Stage 1b: Generate resistance field ──
+  const resistance = generateResistanceGrid(grid, n, n, extent, cellSize);
+  console.log(`[bake] resistance field generated`);
+
+  // ── Stage 2: Stream-power erosion (resistance-aware) ──
   let spResult: ReturnType<typeof streamPowerErosion> | null = null;
   let tStreamPower = 0;
   if (erosion.streamPower.enabled) {
     const t = performance.now();
-    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower);
+    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower, resistance);
     tStreamPower = performance.now() - t;
     console.log(`[bake] stream-power: ${erosion.streamPower.iterations} iterations (${tStreamPower.toFixed(0)}ms)`);
   }
@@ -62,10 +67,12 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
     console.log(`[bake] channel geometry (${(performance.now() - tChan0).toFixed(0)}ms)`);
   }
 
-  // ── Stage 2c: Hillslope transport / mass wasting ──
+  // ── Stage 2c: Hillslope transport / mass wasting (resistance-aware) ──
   {
+    // Recompute resistance after erosion changed heights
+    const postErosionResistance = generateResistanceGrid(grid, n, n, extent, cellSize);
     const tHill0 = performance.now();
-    applyHillslopeTransport(grid, n, n, cellSize);
+    applyHillslopeTransport(grid, n, n, cellSize, undefined, postErosionResistance);
     console.log(`[bake] hillslope transport (${(performance.now() - tHill0).toFixed(0)}ms)`);
   }
 
