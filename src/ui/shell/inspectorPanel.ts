@@ -180,9 +180,16 @@ export class InspectorPanel extends LitElement {
                 <option value="plateau" ?selected=${this._preset === 'plateau'}>Plateau</option>
               </select>
             </div>
-            <div style="color:#666; font-size:10px; margin-top:4px;">
-              Terrain changes require rebake
-            </div>
+            ${this._needsRebake ? html`
+              <button
+                style="margin-top:8px; width:100%; padding:6px; background:rgba(200,120,40,0.8); color:#fff; border:0; border-radius:4px; cursor:pointer; font:12px/1 monospace;"
+                @click=${() => this._emit('rebake')}
+              >Apply & Rebake</button>
+            ` : html`
+              <div style="color:#666; font-size:10px; margin-top:4px;">
+                Terrain is up to date
+              </div>
+            `}
           </div>
         ` : ''}
       </div>
@@ -263,6 +270,10 @@ export class InspectorPanel extends LitElement {
     this.dispatchEvent(new CustomEvent('set-preset', {
       detail: v, bubbles: true, composed: true,
     }));
+  }
+
+  private _emit(name: string) {
+    this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true }));
   }
 }
 

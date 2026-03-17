@@ -170,6 +170,8 @@ shell.addEventListener('cycle-sun', () => {
   const p = sunPresets[sunPresetIdx];
   app.setSunDirection(p.az, p.el);
   viewportStore.setSunDirection(p.az, p.el);
+  worldDoc.scene.sun.azimuth = p.az;
+  worldDoc.scene.sun.elevation = p.el;
   syncToolbar();
 });
 
@@ -208,9 +210,49 @@ shell.addEventListener('set-water', ((e: CustomEvent) => {
 // ── Inspector events (Class C — rebake required) ──
 shell.addEventListener('set-preset', ((e: CustomEvent) => {
   worldDoc.terrain.preset = e.detail;
+  worldDoc.terrain.type = 'macro';
   projectStore.setPresetName(e.detail);
   authoringStore.setNeedsRebake(true);
   projectStore.markDirty();
+}) as EventListener);
+
+// ── Rebake action ──
+shell.addEventListener('rebake', (async () => {
+  authoringStore.setBakeState('baking');
+  authoringStore.setBakeProgress('Starting rebake...');
+  shell.statusText = 'Rebaking terrain...';
+
+  try {
+    const { source, bakeArtifacts: newArtifacts, domain: newDomain } = await createTerrainSource(
+      worldDoc,
+      (progress) => {
+        const stageLabels: Record<string, string> = {
+          'sampling': 'Sampling', 'stream-power': 'Eroding', 'fan-deposition': 'Fans',
+          'thermal': 'Relaxing', 'packaging': 'Packaging', 'cache-hit': 'Cache hit',
+        };
+        authoringStore.setBakeProgress(`${stageLabels[progress.stage] ?? progress.stage} (${progress.stageIndex + 1}/${progress.totalStages})`);
+        shell.statusText = `Rebaking: ${stageLabels[progress.stage] ?? progress.stage}`;
+      },
+    );
+
+    // Swap terrain
+    app.applyNewTerrain({ source, bakeArtifacts: newArtifacts, domain: newDomain });
+
+    // Update stores
+    runtimeStore.setDomain(newDomain);
+    authoringStore.setNeedsRebake(false);
+    authoringStore.setBakeState('complete');
+    authoringStore.setLastBakeTime(newDomain.bakeTimeMs);
+    shell.statusText = runtimeStore.statusLine;
+    projectStore.markDirty();
+
+    console.log('[rebake] complete');
+  } catch (err) {
+    authoringStore.setBakeState('error');
+    authoringStore.setBakeProgress(`Error: ${err instanceof Error ? err.message : err}`);
+    shell.statusText = 'Rebake failed — previous terrain active';
+    console.error('[rebake] failed:', err);
+  }
 }) as EventListener);
 
 // ── Apply document scene state to engine + stores ──

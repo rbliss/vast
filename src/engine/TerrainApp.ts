@@ -10,6 +10,7 @@ import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, 
 import type { DprController } from './controls/dprController';
 import type { RendererBackend, RendererLike } from './backend/types';
 import type { TerrainSource } from './terrain/terrainSource';
+import type { TerrainSourceResult } from './terrain/terrainSource';
 import type { WorldDocument } from './document';
 import type { TerrainBakeArtifacts } from './bake/types';
 import type { TerrainDomainConfig } from './bake/terrainDomain';
@@ -47,7 +48,7 @@ export class TerrainApp {
   readonly matNoDisp: MeshStandardMaterial;
   readonly foliage: FoliageSystem;
   readonly slots: ChunkSlot[];
-  readonly terrain: TerrainSource;
+  terrain: TerrainSource;
   readonly document: WorldDocument;
 
   centerCX: number;
@@ -355,10 +356,57 @@ export class TerrainApp {
     sunWarmthUniform.value = warmth * 0.6; // damped so it's subtle
   }
 
+  // ── Terrain source swap (for rebake) ──
+
+  applyNewTerrain(result: TerrainSourceResult): void {
+    this.terrain = result.source;
+    if (result.domain) {
+      this._domain = result.domain;
+    }
+
+    // Regenerate field textures from new terrain
+    if (this._fieldTextures) {
+      this._fieldTextures.dispose();
+    }
+    const extent = result.domain?.extent ?? 200;
+    const fieldSize = result.domain?.fieldTextureSize ?? 256;
+    const bakeGridSize = result.domain?.bakeGridSize || undefined;
+    const depositionMap = result.bakeArtifacts?.depositionMap ?? null;
+    this._fieldTextures = generateFieldTextures(
+      this.terrain, fieldSize, extent,
+      depositionMap, bakeGridSize,
+    );
+
+    // Force rebuild all chunks with new terrain
+    this.centerCX = Infinity;
+    this.centerCZ = Infinity;
+    this.updateChunks();
+
+    console.log('[terrain] applied new terrain source');
+  }
+
   // ── Water / cloud controls ──
 
-  setWaterLevel(level: number): void {
-    if (this._water) this._water.setWaterLevel(level);
+  setWaterLevel(level: number | null): void {
+    if (level === null || level <= 0) {
+      // Destroy water
+      if (this._water) {
+        this._water.dispose();
+        this._water = null;
+      }
+      return;
+    }
+    if (this._water) {
+      this._water.setWaterLevel(level);
+    } else {
+      // Lazy create water system
+      this._water = createWaterSystem(
+        this.scene as any,
+        this._fieldTextures?.heightMap ?? null as any,
+        this._fieldTextures?.extent ?? 200,
+        { ...DEFAULT_WATER_CONFIG, waterLevel: level },
+      );
+    }
   }
 
   setCloudCoverage(coverage: number): void {
