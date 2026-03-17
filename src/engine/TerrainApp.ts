@@ -394,6 +394,13 @@ export class TerrainApp {
   initEditableMode(gridSize: number = 256, extent: number = 200, existing?: EditableHeightfield): void {
     this._editableHF = existing ?? new EditableHeightfield(gridSize, extent);
     this.terrain = this._editableHF;
+    // Make all slots visible — no dynamic culling in sculpt mode
+    for (const slot of this.slots) {
+      slot.mesh.visible = true;
+      slot.foliage.grass.visible = false;
+      slot.foliage.rock.visible = false;
+      slot.foliage.shrub.visible = false;
+    }
     // Force rebuild all chunks
     this.centerCX = Infinity;
     this.centerCZ = Infinity;
@@ -679,13 +686,16 @@ export class TerrainApp {
     this._applyMovement(dt);
     this.controls.update();
 
-    const { mode, radius } = this._computeCoverageMode();
-    if (mode !== this._coverageMode || radius !== this._activeRadius) {
-      this._coverageMode = mode;
-      this._activeRadius = radius;
-      this._updateSlotVisibility();
-    } else if (mode === 'horizon') {
-      this._updateSlotVisibility();
+    // Skip dynamic visibility in editable/sculpt mode — keep all slots visible
+    if (!this._editableHF) {
+      const { mode, radius } = this._computeCoverageMode();
+      if (mode !== this._coverageMode || radius !== this._activeRadius) {
+        this._coverageMode = mode;
+        this._activeRadius = radius;
+        this._updateSlotVisibility();
+      } else if (mode === 'horizon') {
+        this._updateSlotVisibility();
+      }
     }
 
     this.updateChunks();
