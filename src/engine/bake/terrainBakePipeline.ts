@@ -10,6 +10,7 @@ import { MacroTerrainSource } from '../terrain/macroTerrain';
 import { thermalErosion } from '../terrain/erosion';
 import { streamPowerErosion } from '../terrain/streamPower';
 import { applyChannelGeometry } from '../terrain/channelGeometry';
+import { applyHillslopeTransport } from '../terrain/hillslopeTransport';
 import { applyFanDeposition } from '../terrain/fanDeposition';
 
 /**
@@ -59,6 +60,13 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
     const tChan0 = performance.now();
     applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize);
     console.log(`[bake] channel geometry (${(performance.now() - tChan0).toFixed(0)}ms)`);
+  }
+
+  // ── Stage 2c: Hillslope transport / mass wasting ──
+  {
+    const tHill0 = performance.now();
+    applyHillslopeTransport(grid, n, n, cellSize);
+    console.log(`[bake] hillslope transport (${(performance.now() - tHill0).toFixed(0)}ms)`);
   }
 
   // ── Stage 3: Fan/debris deposition ──

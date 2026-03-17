@@ -11,7 +11,7 @@
 import type { TerrainBakeRequest, TerrainBakeArtifacts, TerrainBakeMetadata } from './types';
 
 // ── Cache version: bump to invalidate all cached bakes ──
-const CACHE_VERSION = 'v3-channels';
+const CACHE_VERSION = 'v4-hillslope';
 
 // ── Cache key generation ──
 

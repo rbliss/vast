@@ -14,6 +14,7 @@ import { MacroTerrainSource } from '../terrain/macroTerrain';
 import { thermalErosion } from '../terrain/erosion';
 import { streamPowerErosion } from '../terrain/streamPower';
 import { applyChannelGeometry } from '../terrain/channelGeometry';
+import { applyHillslopeTransport } from '../terrain/hillslopeTransport';
 import { applyFanDeposition } from '../terrain/fanDeposition';
 
 // ── Progress reporting ──
@@ -70,6 +71,9 @@ function executeBakeInWorker(request: TerrainBakeRequest): TerrainBakeArtifacts 
   if (spResult) {
     applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize);
   }
+
+  // Stage 2c: Hillslope transport
+  applyHillslopeTransport(grid, n, n, cellSize);
 
   // Stage 3: Fan/debris
   reportProgress('fan-deposition', t0);
