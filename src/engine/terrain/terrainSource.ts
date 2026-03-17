@@ -9,7 +9,7 @@
  */
 
 import { terrainHeight, MACRO_HEIGHT_SCALE } from '../terrainHeight';
-import type { WorldDocumentV0 } from '../document';
+import type { WorldDocument } from '../document';
 import { MacroTerrainSource, MACRO_PRESETS } from './macroTerrain';
 import type { TerrainBakeRequest, TerrainBakeArtifacts } from '../bake/types';
 import { runBake, type BakeProgressCallback } from '../bake/terrainBakeManager';
@@ -39,7 +39,7 @@ export class LegacyProceduralTerrainSource implements TerrainSource {
 
 // ── Bake request builder ──
 
-export function buildBakeRequest(doc: WorldDocumentV0): TerrainBakeRequest | null {
+export function buildBakeRequest(doc: WorldDocument): TerrainBakeRequest | null {
   if (doc.terrain.type !== 'macro') return null;
   const preset = MACRO_PRESETS[doc.terrain.preset || 'chain'];
   if (!preset) return null;
@@ -62,7 +62,7 @@ export interface TerrainSourceResult {
 }
 
 export async function createTerrainSource(
-  doc: WorldDocumentV0,
+  doc: WorldDocument,
   onProgress?: BakeProgressCallback,
 ): Promise<TerrainSourceResult> {
   if (doc.terrain.type === 'legacyProcedural') {

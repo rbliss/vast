@@ -6,12 +6,12 @@
  */
 
 import { Observable } from './observable';
-import type { WorldDocumentV0 } from '../engine/document';
+import type { WorldDocument } from '../engine/document';
 
 export type SaveStatus = 'clean' | 'dirty' | 'saving' | 'error';
 
 export class ProjectStore extends Observable {
-  private _document: WorldDocumentV0 | null = null;
+  private _document: WorldDocument | null = null;
   private _name = 'Untitled World';
   private _saveStatus: SaveStatus = 'clean';
   private _presetName = 'chain';
@@ -21,7 +21,7 @@ export class ProjectStore extends Observable {
   get saveStatus() { return this._saveStatus; }
   get presetName() { return this._presetName; }
 
-  setDocument(doc: WorldDocumentV0) {
+  setDocument(doc: WorldDocument) {
     this._document = doc;
     this._name = doc.meta.name;
     this.notify();

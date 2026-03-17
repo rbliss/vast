@@ -10,7 +10,7 @@ import type { TerrainAppOptions, TerrainUpdateResult, ChunkSlot, FoliageSystem, 
 import type { DprController } from './controls/dprController';
 import type { RendererBackend, RendererLike } from './backend/types';
 import type { TerrainSource } from './terrain/terrainSource';
-import type { WorldDocumentV0 } from './document';
+import type { WorldDocument } from './document';
 import type { TerrainBakeArtifacts } from './bake/types';
 import type { TerrainDomainConfig } from './bake/terrainDomain';
 import { applyDebugOverlay, type OverlayMode } from './terrain/debugOverlay';
@@ -48,7 +48,7 @@ export class TerrainApp {
   readonly foliage: FoliageSystem;
   readonly slots: ChunkSlot[];
   readonly terrain: TerrainSource;
-  readonly document: WorldDocumentV0;
+  readonly document: WorldDocument;
 
   centerCX: number;
   centerCZ: number;
@@ -79,7 +79,7 @@ export class TerrainApp {
   /** Async factory — initializes WebGPU backend + TSL materials. */
   static async createAsync(
     container: HTMLElement,
-    doc: WorldDocumentV0,
+    doc: WorldDocument,
     terrainSource: TerrainSource,
     opts: TerrainAppOptions = {},
     bakeArtifacts?: TerrainBakeArtifacts | null,
@@ -106,7 +106,7 @@ export class TerrainApp {
 
   private constructor(
     container: HTMLElement,
-    doc: WorldDocumentV0,
+    doc: WorldDocument,
     terrainSource: TerrainSource,
     opts: TerrainAppOptions,
     backend: RendererBackend,

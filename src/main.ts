@@ -37,18 +37,30 @@ if (dprParam === 'auto') {
   if (v >= 1.0 && v <= Math.min(window.devicePixelRatio, 2)) dprInitial = v;
 }
 
-// ── Create world document and terrain source ──
+// ── Create world document and apply URL overrides ──
 const worldDoc = createDefaultDocument();
-// Apply URL-driven overrides to document defaults
 worldDoc.scene.dpr.mode = dprMode;
 worldDoc.scene.dpr.initial = dprInitial;
 
-// Macro terrain preset override
+// Macro terrain preset
 const presetParam = params.get('preset');
 if (presetParam) {
   worldDoc.terrain.type = 'macro';
   worldDoc.terrain.preset = presetParam;
 }
+
+// Scene params from URL
+const waterParam = params.get('water');
+if (waterParam !== null) worldDoc.scene.waterLevel = parseFloat(waterParam) || 8;
+const exposureUrlParam = params.get('exposure');
+if (exposureUrlParam) worldDoc.scene.exposure = parseFloat(exposureUrlParam);
+const sunAzUrl = params.get('sunaz');
+const sunElUrl = params.get('sunel');
+if (sunAzUrl) worldDoc.scene.sun.azimuth = parseFloat(sunAzUrl);
+if (sunElUrl) worldDoc.scene.sun.elevation = parseFloat(sunElUrl);
+if (params.has('present')) worldDoc.scene.presentation = true;
+if (params.get('ibl') === 'off') worldDoc.scene.ibl = false;
+if (params.get('clay') !== null) { /* clay is viewport-only, not document state */ }
 
 // ── Startup status overlay ──
 const startupEl = document.getElementById('startup-status');
@@ -79,9 +91,8 @@ const { source: terrainSource, bakeArtifacts, domain: terrainDomain } = await cr
 
 setStartupStatus('Loading app...');
 
-// Water level override
-const waterParam = params.get('water');
-const waterLevel = waterParam !== null ? parseFloat(waterParam) || 8 : null;
+// Water level from document
+const waterLevel = worldDoc.scene.waterLevel;
 
 // ── Create engine — canvas goes into viewport host ──
 const viewportHost = mustEl('viewport-host');
@@ -164,28 +175,24 @@ shell.addEventListener('take-snapshot', () => {
   snapshotUi.take();
 });
 
-// ── URL param overrides ──
-if (params.has('present')) {
+// ── Apply document scene state to engine + stores ──
+app.setSunDirection(worldDoc.scene.sun.azimuth, worldDoc.scene.sun.elevation);
+app.setExposure(worldDoc.scene.exposure);
+if (!worldDoc.scene.ibl) app.setIblEnabled(false);
+if (worldDoc.scene.presentation) {
   app.setPresentationMode(true).then(syncToolbar);
 }
 if (params.get('clay') !== null) {
   app.setClayMode(true);
+  viewportStore.setClayMode(true);
 }
-if (params.get('ibl') === 'off') {
-  app.setIblEnabled(false);
-}
-const exposureParam = params.get('exposure');
-if (exposureParam) app.setExposure(parseFloat(exposureParam));
-const sunAzParam = params.get('sunaz');
-const sunElParam = params.get('sunel');
-if (sunAzParam || sunElParam) {
-  const az = sunAzParam ? parseFloat(sunAzParam) : 210;
-  const el = sunElParam ? parseFloat(sunElParam) : 35;
-  app.setSunDirection(az, el);
-  toolbar.sunLabel = `${Math.round(az)}° ${Math.round(el)}°`;
-} else {
-  syncToolbar();
-}
+viewportStore.setSunDirection(worldDoc.scene.sun.azimuth, worldDoc.scene.sun.elevation);
+viewportStore.setExposure(worldDoc.scene.exposure);
+viewportStore.setIblEnabled(worldDoc.scene.ibl);
+viewportStore.setPresentationMode(worldDoc.scene.presentation);
+viewportStore.setWaterLevel(worldDoc.scene.waterLevel);
+viewportStore.setCloudCoverage(worldDoc.scene.cloudCoverage);
+syncToolbar();
 
 // ── Status bar from runtime store ──
 shell.statusText = runtimeStore.statusLine;
