@@ -132,6 +132,7 @@ export class InspectorPanel extends LitElement {
     .tag-live { background: rgba(60,160,80,0.5); color: #bfb; }
     .tag-apply { background: rgba(80,120,200,0.5); color: #bdf; }
     .tag-rebake { background: rgba(200,120,40,0.5); color: #fdb; }
+    .tag-saved { background: rgba(100,100,110,0.5); color: #aab; }
     .section-body { padding: 4px 12px 12px; }
     .field {
       display: flex; align-items: center;
@@ -227,14 +228,14 @@ export class InspectorPanel extends LitElement {
         <div class="section-header" @click=${() => this._materialsOpen = !this._materialsOpen}>
           <span class="arrow">${this._materialsOpen ? '▼' : '▶'}</span>
           Materials
-          <span class="class-tag tag-apply">Apply</span>
+          <span class="class-tag tag-saved">Saved</span>
         </div>
         ${this._materialsOpen ? html`<div class="section-body">
           ${this._slider('Snow', this._snowThreshold, 0.5, 1.0, 0.01, v => { this._snowThreshold = v; this._fire('set-material', { snowThreshold: v }); })}
           ${this._slider('Rock Min', this._rockSlopeMin, 0.1, 0.8, 0.02, v => { this._rockSlopeMin = v; this._fire('set-material', { rockSlopeMin: v }); })}
           ${this._slider('Rock Max', this._rockSlopeMax, 0.2, 1.0, 0.02, v => { this._rockSlopeMax = v; this._fire('set-material', { rockSlopeMax: v }); })}
           ${this._slider('Sediment', this._sedimentEmphasis, 0, 1, 0.05, v => { this._sedimentEmphasis = v; this._fire('set-material', { sedimentEmphasis: v }); })}
-          <div class="status-text">Material changes saved to document</div>
+          <div class="status-text">Saved to document (not yet live)</div>
         </div>` : ''}
       </div>`;
   }
@@ -246,7 +247,7 @@ export class InspectorPanel extends LitElement {
         <div class="section-header" @click=${() => this._scatterOpen = !this._scatterOpen}>
           <span class="arrow">${this._scatterOpen ? '▼' : '▶'}</span>
           Scatter
-          <span class="class-tag tag-apply">Apply</span>
+          <span class="class-tag tag-saved">Saved</span>
         </div>
         ${this._scatterOpen ? html`<div class="section-body">
           ${this._slider('Grass', this._grassDensity, 0, 2, 0.1, v => { this._grassDensity = v; this._fire('set-scatter', { grassDensity: v }); })}
@@ -254,7 +255,7 @@ export class InspectorPanel extends LitElement {
           ${this._slider('Shrubs', this._shrubDensity, 0, 2, 0.1, v => { this._shrubDensity = v; this._fire('set-scatter', { shrubDensity: v }); })}
           ${this._slider('Alpine', this._alpineCutoff, 0.5, 1.0, 0.02, v => { this._alpineCutoff = v; this._fire('set-scatter', { alpineCutoff: v }); })}
           ${this._slider('Debris', this._debrisEmphasis, 0, 3, 0.1, v => { this._debrisEmphasis = v; this._fire('set-scatter', { debrisEmphasis: v }); })}
-          <div class="status-text">Scatter changes saved to document</div>
+          <div class="status-text">Saved to document (not yet live)</div>
         </div>` : ''}
       </div>`;
   }

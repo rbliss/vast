@@ -45,9 +45,31 @@ export function buildBakeRequest(doc: WorldDocument): TerrainBakeRequest | null 
   if (!preset) return null;
   if (!preset.erosion) return null;
 
+  // Start from preset defaults, override with document-authored values
+  const baseErosion = preset.erosion;
+  const docErosion = doc.terrain.erosion;
+
   return {
     macro: preset,
-    erosion: preset.erosion,
+    erosion: {
+      gridSize: doc.terrain.bakeGridSize || baseErosion.gridSize,
+      extent: doc.terrain.bakeExtent || baseErosion.extent,
+      streamPower: {
+        ...baseErosion.streamPower,
+        iterations: docErosion.streamPowerIterations ?? baseErosion.streamPower.iterations,
+        erosionK: docErosion.erosionStrength ?? baseErosion.streamPower.erosionK,
+        diffusionRate: docErosion.diffusionStrength ?? baseErosion.streamPower.diffusionRate,
+      },
+      thermal: {
+        ...baseErosion.thermal,
+        iterations: docErosion.thermalIterations ?? baseErosion.thermal.iterations,
+      },
+      hydraulic: baseErosion.hydraulic,
+      fan: {
+        ...baseErosion.fan,
+        fanBlend: docErosion.fanStrength ?? baseErosion.fan.fanBlend,
+      },
+    },
   };
 }
 
