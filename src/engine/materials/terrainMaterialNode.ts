@@ -204,10 +204,13 @@ const SNOW_ROUGHNESS = float(0.4);
 // Blends terrain color toward haze based on view distance and fragment height.
 // Low terrain fades faster (valley haze), high terrain stays clearer (alpine clarity).
 
-const HAZE_COLOR_HORIZON = vec3(0.72, 0.78, 0.88); // blue-gray haze
-const HAZE_COLOR_ZENITH = vec3(0.53, 0.63, 0.82);  // deeper blue overhead
+// Base haze colors (cool/neutral sky)
+const HAZE_COOL_HORIZON = vec3(0.72, 0.78, 0.88);
+const HAZE_WARM_HORIZON = vec3(0.85, 0.78, 0.65); // golden hour horizon
+const HAZE_COOL_ZENITH = vec3(0.53, 0.63, 0.82);
+const HAZE_WARM_ZENITH = vec3(0.65, 0.58, 0.52); // warm overhead
 
-const aerialPerspective = Fn(([surfaceColor, wPos]: [any, any]) => {
+const aerialPerspective = Fn(([surfaceColor, wPos, sunWarmthU]: [any, any, any]) => {
   // Distance from camera to fragment
   const viewVec = sub(wPos, cameraPosition);
   const dist = viewVec.length();
@@ -223,14 +226,19 @@ const aerialPerspective = Fn(([surfaceColor, wPos]: [any, any]) => {
   const fogDensity = float(0.004).mul(densityScale);
   const extinction = float(1).sub(exp(negate(dist.mul(fogDensity))));
 
-  // Haze color varies slightly by view angle (bluer looking up)
+  // Haze color: blend cool↔warm by sun warmth, vary by view angle
   const viewDir = normalize(viewVec);
   const upDot = clamp(viewDir.y.negate(), float(0), float(1));
-  const hazeColor = mix(HAZE_COLOR_HORIZON, HAZE_COLOR_ZENITH, upDot.mul(0.5));
+  const horizonColor = mix(HAZE_COOL_HORIZON, HAZE_WARM_HORIZON, sunWarmthU);
+  const zenithColor = mix(HAZE_COOL_ZENITH, HAZE_WARM_ZENITH, sunWarmthU);
+  const hazeColor = mix(horizonColor, zenithColor, upDot.mul(0.5));
 
   // Blend surface toward haze
   return mix(surfaceColor, hazeColor, extinction.mul(0.85));
 });
+
+/** Shared sun warmth uniform — updated by TerrainApp when sun direction changes */
+export const sunWarmthUniform = uniform(0.0);
 
 export function createNodeTerrainMaterials(
   textures: TextureSet,
@@ -268,7 +276,7 @@ export function createNodeTerrainMaterials(
         const dc = mix(dirtColor, vec4(SEDIMENT_COLOR, 1.0), sedimentMix.mul(0.4));
 
         const surfaceColor = rc.mul(bw.x).add(gc.mul(bw.y)).add(dc.mul(bw.z)).add(SNOW_COLOR.mul(bw.w));
-        return aerialPerspective(surfaceColor, wp);
+        return aerialPerspective(surfaceColor, wp, sunWarmthUniform);
       }
 
       // Fallback: geometric slope only (legacy path)
@@ -283,7 +291,7 @@ export function createNodeTerrainMaterials(
       const gc = texture(textures.grassDiff, wp.xz.mul(gr));
       const dc = texture(textures.dirtDiff, wp.xz.mul(dt));
       const fallbackColor = rc.mul(rock.div(sum)).add(gc.mul(grass.div(sum))).add(dc.mul(dirt.div(sum)));
-      return aerialPerspective(fallbackColor, wp);
+      return aerialPerspective(fallbackColor, wp, sunWarmthUniform);
     })();
 
     // ── Roughness ──

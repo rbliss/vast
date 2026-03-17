@@ -13,6 +13,7 @@ import type { TerrainSource } from './terrain/terrainSource';
 import type { WorldDocumentV0 } from './document';
 import { applyDebugOverlay, type OverlayMode } from './terrain/debugOverlay';
 import { generateFieldTextures, type FieldTextures } from './terrain/fieldTextures';
+import { sunWarmthUniform } from './materials/terrainMaterialNode';
 
 import { getBackend } from './backend';
 import { createOrbitMovement } from './controls/orbitMovement';
@@ -292,14 +293,31 @@ export class TerrainApp {
   private _updateSunDirection(): void {
     const dir = this._sunDirectionVector();
     this._sunLight.position.copy(dir).multiplyScalar(100);
-    // Warm color at low elevation, cooler at high
+
+    // Warmth factor: 0 = high sun (cool), 1 = low sun (warm)
     const warmth = 1 - this._sunElevation / 85;
+
+    // Sun color: warm at low elevation
     const r = 1.0;
     const g = 0.95 - warmth * 0.1;
     const b = 0.9 - warmth * 0.25;
     (this._sunLight as any).color.setRGB(r, g, b);
-    // Intensity: slightly stronger at low angles for dramatic shadows
     (this._sunLight as any).intensity = 2.2 + warmth * 0.8;
+
+    // Hemisphere light: tint sky color warm to match sun
+    const skyR = 0.53 + warmth * 0.15;
+    const skyG = 0.52 + warmth * 0.05;
+    const skyB = 0.58 - warmth * 0.12;
+    (this._hemiLight as any).color.setRGB(skyR, skyG, skyB);
+
+    // Background: tint to match atmosphere
+    const bgR = 0.53 + warmth * 0.2;
+    const bgG = 0.64 + warmth * 0.08;
+    const bgB = 0.82 - warmth * 0.15;
+    (this.scene as any).background.setRGB(bgR, bgG, bgB);
+
+    // Update aerial perspective uniform
+    sunWarmthUniform.value = warmth * 0.6; // damped so it's subtle
   }
 
   private _buildSlots(): void {
