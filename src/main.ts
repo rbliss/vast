@@ -89,10 +89,7 @@ const app = await TerrainApp.createAsync(viewportHost, worldDoc, terrainSource, 
   waterLevel,
 }, bakeArtifacts, terrainDomain);
 
-// Move canvas into viewport slot
-const canvas = app.renderer.domElement;
-canvas.slot = 'viewport';
-viewportHost.appendChild(canvas);
+// Canvas is already appended to viewportHost by TerrainApp constructor
 
 // ── Shell + toolbar wiring ──
 const shell = document.getElementById('shell') as EditorShell;
@@ -170,27 +167,29 @@ if (exposureParam) app.setExposure(parseFloat(exposureParam));
 const sunAzParam = params.get('sunaz');
 const sunElParam = params.get('sunel');
 if (sunAzParam || sunElParam) {
-  app.setSunDirection(
-    sunAzParam ? parseFloat(sunAzParam) : 210,
-    sunElParam ? parseFloat(sunElParam) : 35,
-  );
+  const az = sunAzParam ? parseFloat(sunAzParam) : 210;
+  const el = sunElParam ? parseFloat(sunElParam) : 35;
+  app.setSunDirection(az, el);
+  toolbar.sunLabel = `${Math.round(az)}° ${Math.round(el)}°`;
+} else {
+  syncToolbar();
 }
-syncToolbar();
 
 // ── Status bar ──
 shell.statusText = terrainDomain.fromCache
   ? `Cached · ±${terrainDomain.extent} · ${terrainDomain.bakeGridSize}²`
   : `Baked ${terrainDomain.bakeTimeMs.toFixed(0)}ms · ±${terrainDomain.extent} · ${terrainDomain.bakeGridSize}²`;
 
-// ── Resize ──
-window.addEventListener('resize', () => {
-  const vp = viewportHost;
-  app.resize(vp.clientWidth, vp.clientHeight);
+// ── Resize via ResizeObserver on viewport host ──
+const resizeObserver = new ResizeObserver((entries) => {
+  for (const entry of entries) {
+    const { width, height } = entry.contentRect;
+    if (width > 0 && height > 0) {
+      app.resize(width, height);
+    }
+  }
 });
-// Initial resize to viewport dimensions
-requestAnimationFrame(() => {
-  app.resize(viewportHost.clientWidth, viewportHost.clientHeight);
-});
+resizeObserver.observe(viewportHost);
 
 // ── Debug access ──
 if (debugMode) {

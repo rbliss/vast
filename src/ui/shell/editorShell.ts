@@ -61,10 +61,10 @@ export class EditorShell extends LitElement {
       overflow: hidden;
     }
 
-    .viewport ::slotted(canvas) {
+    .viewport ::slotted([slot="viewport"]) {
       display: block;
-      width: 100% !important;
-      height: 100% !important;
+      width: 100%;
+      height: 100%;
     }
 
     .left-pane {
@@ -168,10 +168,8 @@ export class EditorShell extends LitElement {
   }
 
   private _notifyResize() {
-    // Give the CSS transition time to apply, then dispatch resize
-    setTimeout(() => {
-      window.dispatchEvent(new Event('resize'));
-    }, 250);
+    // Dispatch a custom event so consumers can observe layout changes
+    this.dispatchEvent(new CustomEvent('viewport-resize', { bubbles: true, composed: true }));
   }
 }
 
