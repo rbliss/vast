@@ -18,6 +18,9 @@ import { createDefaultDocument } from './engine/document';
 import { createTerrainSource } from './engine/terrain/terrainSource';
 import type { EditorShell } from './ui/shell/editorShell';
 import type { ToolbarControls } from './ui/shell/toolbarControls';
+import { viewportStore } from './stores/viewportStore';
+import { projectStore } from './stores/projectStore';
+import { runtimeStore } from './stores/runtimeStore';
 
 // ── Parse URL params ──
 const params = new URLSearchParams(location.search);
@@ -119,25 +122,33 @@ const sunPresets = [
 ];
 let sunPresetIdx = 0;
 
+// ── Initialize stores ──
+projectStore.setDocument(worldDoc);
+projectStore.setPresetName(presetParam || 'default');
+runtimeStore.setDomain(terrainDomain);
+
 function syncToolbar() {
-  toolbar.clayMode = app.isClayMode();
-  toolbar.presentMode = app.isPresentationMode();
-  toolbar.overlayMode = app.getOverlayMode();
-  toolbar.sunLabel = sunPresets[sunPresetIdx].label;
+  toolbar.clayMode = viewportStore.clayMode;
+  toolbar.presentMode = viewportStore.presentationMode;
+  toolbar.overlayMode = viewportStore.overlayMode;
+  toolbar.sunLabel = sunPresets[sunPresetIdx]?.label ?? viewportStore.sunLabel;
 }
 
 shell.addEventListener('toggle-present', async () => {
   await app.setPresentationMode(!app.isPresentationMode());
+  viewportStore.setPresentationMode(app.isPresentationMode());
   syncToolbar();
 });
 
 shell.addEventListener('toggle-clay', () => {
   app.toggleClayMode();
+  viewportStore.setClayMode(app.isClayMode());
   syncToolbar();
 });
 
 shell.addEventListener('cycle-overlay', () => {
-  app.cycleOverlay();
+  const mode = app.cycleOverlay();
+  viewportStore.setOverlayMode(mode);
   syncToolbar();
 });
 
@@ -145,6 +156,7 @@ shell.addEventListener('cycle-sun', () => {
   sunPresetIdx = (sunPresetIdx + 1) % sunPresets.length;
   const p = sunPresets[sunPresetIdx];
   app.setSunDirection(p.az, p.el);
+  viewportStore.setSunDirection(p.az, p.el);
   syncToolbar();
 });
 
@@ -175,10 +187,11 @@ if (sunAzParam || sunElParam) {
   syncToolbar();
 }
 
-// ── Status bar ──
-shell.statusText = terrainDomain.fromCache
-  ? `Cached · ±${terrainDomain.extent} · ${terrainDomain.bakeGridSize}²`
-  : `Baked ${terrainDomain.bakeTimeMs.toFixed(0)}ms · ±${terrainDomain.extent} · ${terrainDomain.bakeGridSize}²`;
+// ── Status bar from runtime store ──
+shell.statusText = runtimeStore.statusLine;
+runtimeStore.subscribe(() => {
+  shell.statusText = runtimeStore.statusLine;
+});
 
 // ── Resize via ResizeObserver on viewport host ──
 const resizeObserver = new ResizeObserver((entries) => {
@@ -211,8 +224,9 @@ function animate() {
 
 animate();
 
-// Hide startup overlay
+// Hide startup overlay + record startup time
 const startupMs = Math.round(performance.now() - startupT0);
+runtimeStore.setStartupMs(startupMs);
 if (startupEl) {
   startupEl.classList.add('hidden');
   setTimeout(() => startupEl.remove(), 500);
