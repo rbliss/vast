@@ -22,7 +22,8 @@ import {
   GRASS_NOISE_MIN, GRASS_NOISE_MAX, DIRT_NOISE_MIN, DIRT_NOISE_MAX,
   DIRT_WEIGHT_SCALE, TRIPLANAR_SHARPNESS,
   DISPLACEMENT_SCALE, DISPLACEMENT_BIAS, DISPLACEMENT_FADE_DISTANCE,
-  ROCK_NORMAL_SCALE, TERRAIN_ENV_MAP_INTENSITY,
+  ROCK_NORMAL_SCALE, GRASS_NORMAL_SCALE, DIRT_NORMAL_SCALE,
+  TERRAIN_ENV_MAP_INTENSITY,
 } from './terrain/featureModel';
 
 // ── Pure expression helpers ──
@@ -130,16 +131,41 @@ export function createNodeTerrainMaterials(textures: TextureSet): TerrainMateria
     // ── Metalness ──
     mat.metalnessNode = float(0);
 
-    // ── Normal: rock tri-planar in world space → view space ──
+    // ── Normal: per-biome normals blended → view space ──
     mat.normalNode = Fn(() => {
       const wp = positionWorld;
       const wn = normalWorld;
       const bw = biomeWeights(wp, wn);
+
+      // Rock: tri-planar Whiteout → world space → view space
       const rockNrmWorld = triplanarRockNormal(textures.rockNorm, wp, wn, rk);
-      // Transform world-space rock normal to view space (normalNode expects view space)
       const rockNrmView = normalize(cameraViewMatrix.mul(vec4(rockNrmWorld, 0)).xyz);
-      // Mix: flat areas keep geometry normal, steep areas get rock normal (both view space)
-      return normalize(mix(normalView, rockNrmView, bw.x));
+
+      // Grass: planar XZ normal (Y-up tangent basis) → world space → view space
+      const grassTn = texture(textures.grassNorm, wp.xz.mul(gr)).xyz.mul(2).sub(1);
+      const grassNrmWorld = normalize(vec3(
+        grassTn.x.mul(GRASS_NORMAL_SCALE),
+        grassTn.z,
+        grassTn.y.mul(GRASS_NORMAL_SCALE),
+      ));
+      const grassNrmView = normalize(cameraViewMatrix.mul(vec4(grassNrmWorld, 0)).xyz);
+
+      // Dirt: planar XZ normal (Y-up tangent basis) → world space → view space
+      const dirtTn = texture(textures.dirtNorm, wp.xz.mul(dt)).xyz.mul(2).sub(1);
+      const dirtNrmWorld = normalize(vec3(
+        dirtTn.x.mul(DIRT_NORMAL_SCALE),
+        dirtTn.z,
+        dirtTn.y.mul(DIRT_NORMAL_SCALE),
+      ));
+      const dirtNrmView = normalize(cameraViewMatrix.mul(vec4(dirtNrmWorld, 0)).xyz);
+
+      // Blend all biome normals by weight
+      const blended = normalize(
+        rockNrmView.mul(bw.x)
+          .add(grassNrmView.mul(bw.y))
+          .add(dirtNrmView.mul(bw.z))
+      );
+      return blended;
     })();
 
     // ── AO: rock gets AO, grass/dirt → 1.0 ──

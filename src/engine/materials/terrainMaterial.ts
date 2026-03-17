@@ -18,7 +18,8 @@ import {
   GRASS_NOISE_MIN, GRASS_NOISE_MAX, DIRT_NOISE_MIN, DIRT_NOISE_MAX,
   DIRT_WEIGHT_SCALE, TRIPLANAR_SHARPNESS,
   DISPLACEMENT_SCALE, DISPLACEMENT_BIAS, DISPLACEMENT_FADE_DISTANCE,
-  ROCK_NORMAL_SCALE, TERRAIN_ENV_MAP_INTENSITY,
+  ROCK_NORMAL_SCALE, GRASS_NORMAL_SCALE, DIRT_NORMAL_SCALE,
+  TERRAIN_ENV_MAP_INTENSITY,
 } from './terrain/featureModel';
 
 export function createTerrainMaterials(textures: TextureSet): TerrainMaterials {
@@ -59,6 +60,8 @@ function applyBiomeShader(material: MeshStandardMaterial, tex: TextureSet): void
     shader.uniforms.grassRoughMap = { value: tex.grassRough };
     shader.uniforms.dirtDiffMap  = { value: tex.dirtDiff };
     shader.uniforms.dirtRoughMap = { value: tex.dirtRough };
+    shader.uniforms.grassNormMap = { value: tex.grassNorm };
+    shader.uniforms.dirtNormMap  = { value: tex.dirtNorm };
 
     // ── Vertex: world-space varyings + edge displacement fade ──
     shader.vertexShader = shader.vertexShader.replace(
@@ -102,6 +105,8 @@ function applyBiomeShader(material: MeshStandardMaterial, tex: TextureSet): void
       uniform sampler2D grassRoughMap;
       uniform sampler2D dirtDiffMap;
       uniform sampler2D dirtRoughMap;
+      uniform sampler2D grassNormMap;
+      uniform sampler2D dirtNormMap;
 
       float biomeHash(vec2 p) {
         vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -186,6 +191,8 @@ function applyBiomeShader(material: MeshStandardMaterial, tex: TextureSet): void
       {
         vec3 flatNormal = geoNormal;
         vec3 axisSign = sign(vWorldNormal);
+
+        // ── Rock: tri-planar Whiteout normal ──
         vec3 tnX = texture2D(normalMap, triUvX).xyz * 2.0 - 1.0;
         vec3 tnY = texture2D(normalMap, triUvY).xyz * 2.0 - 1.0;
         vec3 tnZ = texture2D(normalMap, triUvZ).xyz * 2.0 - 1.0;
@@ -198,7 +205,22 @@ function applyBiomeShader(material: MeshStandardMaterial, tex: TextureSet): void
           tnX.zyx * triWeights.x + tnY.xzy * triWeights.y + tnZ.xyz * triWeights.z
         );
         vec3 rockNrmView = normalize(mat3(viewMatrix) * rockNrmWorld);
-        normal = normalize(mix(flatNormal, rockNrmView, wRock));
+
+        // ── Grass/dirt: planar XZ normal (Y-up tangent basis) ──
+        vec3 grassTn = texture2D(grassNormMap, grassUv).xyz * 2.0 - 1.0;
+        grassTn.xy *= ${GRASS_NORMAL_SCALE.toFixed(1)};
+        vec3 grassNrmWorld = normalize(vec3(grassTn.x, grassTn.z, grassTn.y));
+        vec3 grassNrmView = normalize(mat3(viewMatrix) * grassNrmWorld);
+
+        vec3 dirtTn = texture2D(dirtNormMap, dirtUv).xyz * 2.0 - 1.0;
+        dirtTn.xy *= ${DIRT_NORMAL_SCALE.toFixed(1)};
+        vec3 dirtNrmWorld = normalize(vec3(dirtTn.x, dirtTn.z, dirtTn.y));
+        vec3 dirtNrmView = normalize(mat3(viewMatrix) * dirtNrmWorld);
+
+        // ── Blend by biome weight ──
+        // Each biome contributes its normal-mapped result weighted by biome weight
+        vec3 blendedNrm = rockNrmView * wRock + grassNrmView * wGrass + dirtNrmView * wDirt;
+        normal = normalize(blendedNrm);
       }
       #endif
       `

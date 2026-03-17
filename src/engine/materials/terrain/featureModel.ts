@@ -50,6 +50,10 @@ export const ROCK_AO_INTENSITY = 1.0;
 // ── Normal mapping ──
 /** Normal scale for rock normal map */
 export const ROCK_NORMAL_SCALE = 1.0;
+/** Normal scale for grass normal map (planar XZ) */
+export const GRASS_NORMAL_SCALE = 0.5;
+/** Normal scale for dirt normal map (planar XZ) */
+export const DIRT_NORMAL_SCALE = 0.6;
 
 // ── Environment / IBL ──
 /** Terrain material env map intensity */
