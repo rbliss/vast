@@ -14,6 +14,7 @@ import type { WorldDocumentV0 } from './document';
 import { applyDebugOverlay, type OverlayMode } from './terrain/debugOverlay';
 import { generateFieldTextures, type FieldTextures } from './terrain/fieldTextures';
 import { sunWarmthUniform } from './materials/terrainMaterialNode';
+import { createWaterSystem, type WaterSystem, type WaterConfig, DEFAULT_WATER_CONFIG } from './water/waterSystem';
 
 import { getBackend } from './backend';
 import { createOrbitMovement } from './controls/orbitMovement';
@@ -58,6 +59,7 @@ export class TerrainApp {
   private _envMap: THREE.Texture;
   private _coverageMode: 'base' | 'shallow' | 'horizon';
   private _activeRadius: number;
+  private _water: WaterSystem | null;
   private _clayMatDisp: MeshStandardMaterial | null;
   private _clayMatNoDisp: MeshStandardMaterial | null;
   private _overlayMode: OverlayMode;
@@ -161,6 +163,17 @@ export class TerrainApp {
 
     // Foliage
     this.foliage = createFoliageSystem(this.scene, FOLIAGE_ENV_INTENSITY);
+
+    // Water
+    const waterLevel = opts.waterLevel;
+    if (waterLevel != null) {
+      this._water = createWaterSystem(this.scene as any, terrainSource, {
+        ...DEFAULT_WATER_CONFIG,
+        waterLevel,
+      });
+    } else {
+      this._water = null;
+    }
 
     // Chunk pool
     this.slots = [];

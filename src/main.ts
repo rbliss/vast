@@ -45,11 +45,16 @@ if (presetParam) {
 
 const terrainSource = createTerrainSource(worldDoc);
 
+// Water level override
+const waterParam = params.get('water');
+const waterLevel = waterParam !== null ? parseFloat(waterParam) || 8 : null;
+
 // ── Create engine (WebGPU) ──
 const app = await TerrainApp.createAsync(document.body, worldDoc, terrainSource, {
   debug: debugMode,
   dprMode,
   dprInitial,
+  waterLevel,
 });
 
 // ── Wire UI ──

@@ -12,6 +12,8 @@ export interface TerrainAppOptions {
   debug?: boolean;
   dprMode?: 'fixed' | 'auto';
   dprInitial?: number;
+  /** Water level (null = no water) */
+  waterLevel?: number | null;
 }
 
 export interface TerrainUpdateResult {
