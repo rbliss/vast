@@ -149,7 +149,10 @@ function syncToolbar() {
 
 shell.addEventListener('toggle-present', async () => {
   await app.setPresentationMode(!app.isPresentationMode());
-  viewportStore.setPresentationMode(app.isPresentationMode());
+  const on = app.isPresentationMode();
+  viewportStore.setPresentationMode(on);
+  worldDoc.scene.presentation = on;
+  projectStore.markDirty();
   syncToolbar();
 });
 
@@ -186,6 +189,7 @@ shell.addEventListener('set-sun', ((e: CustomEvent) => {
   viewportStore.setSunDirection(azimuth, elevation);
   worldDoc.scene.sun.azimuth = azimuth;
   worldDoc.scene.sun.elevation = elevation;
+  projectStore.markDirty();
   syncToolbar();
 }) as EventListener);
 
@@ -193,18 +197,21 @@ shell.addEventListener('set-exposure', ((e: CustomEvent) => {
   app.setExposure(e.detail);
   viewportStore.setExposure(e.detail);
   worldDoc.scene.exposure = e.detail;
+  projectStore.markDirty();
 }) as EventListener);
 
 shell.addEventListener('set-clouds', ((e: CustomEvent) => {
   app.setCloudCoverage(e.detail);
   viewportStore.setCloudCoverage(e.detail);
   worldDoc.scene.cloudCoverage = e.detail;
+  projectStore.markDirty();
 }) as EventListener);
 
 shell.addEventListener('set-water', ((e: CustomEvent) => {
   app.setWaterLevel(e.detail);
   viewportStore.setWaterLevel(e.detail);
   worldDoc.scene.waterLevel = e.detail;
+  projectStore.markDirty();
 }) as EventListener);
 
 // ── Inspector events (Class C — rebake required) ──

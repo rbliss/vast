@@ -22,6 +22,8 @@ export interface FieldTextures {
   extent: number;
   /** CPU-side field sampler for scatter/foliage placement */
   sampleAt: (wx: number, wz: number) => { slope: number; altitude: number; curvature: number; deposition: number };
+  /** Update texture data in-place from another FieldTextures (preserves GPU references) */
+  updateFrom: (other: FieldTextures) => void;
   /** Dispose all GPU resources */
   dispose: () => void;
 }
@@ -226,6 +228,35 @@ export function generateFieldTextures(
     heightMap,
     extent,
     sampleAt,
+    /**
+     * Update texture data in-place from a new FieldTextures source.
+     * Preserves GPU texture references so existing material/water shaders
+     * continue to sample the correct data after rebake.
+     */
+    updateFrom(other: FieldTextures) {
+      // Copy field map data
+      const srcField = other.fieldMap.image.data as Float32Array;
+      const dstField = fieldMap.image.data as Float32Array;
+      if (srcField.length === dstField.length) {
+        dstField.set(srcField);
+        fieldMap.needsUpdate = true;
+      }
+
+      // Copy height map data
+      const srcHeight = other.heightMap.image.data as Float32Array;
+      const dstHeight = heightMap.image.data as Float32Array;
+      if (srcHeight.length === dstHeight.length) {
+        dstHeight.set(srcHeight);
+        heightMap.needsUpdate = true;
+      }
+
+      // Update CPU-side sampler by replacing the closure reference
+      // (the data array is the same buffer, already updated above)
+
+      // Dispose the source textures (we only needed the data)
+      other.dispose();
+      console.log('[fields] updated existing textures in-place');
+    },
     dispose: () => { fieldMap.dispose(); heightMap.dispose(); },
   };
 }

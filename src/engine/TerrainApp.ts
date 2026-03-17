@@ -364,18 +364,23 @@ export class TerrainApp {
       this._domain = result.domain;
     }
 
-    // Regenerate field textures from new terrain
-    if (this._fieldTextures) {
-      this._fieldTextures.dispose();
-    }
+    // Regenerate field textures and update existing GPU textures in-place
+    // (preserves material/water shader references)
     const extent = result.domain?.extent ?? 200;
     const fieldSize = result.domain?.fieldTextureSize ?? 256;
     const bakeGridSize = result.domain?.bakeGridSize || undefined;
     const depositionMap = result.bakeArtifacts?.depositionMap ?? null;
-    this._fieldTextures = generateFieldTextures(
+    const newFields = generateFieldTextures(
       this.terrain, fieldSize, extent,
       depositionMap, bakeGridSize,
     );
+
+    if (this._fieldTextures) {
+      // Update existing textures in-place (materials/water keep their references)
+      this._fieldTextures.updateFrom(newFields);
+    } else {
+      this._fieldTextures = newFields;
+    }
 
     // Force rebuild all chunks with new terrain
     this.centerCX = Infinity;
