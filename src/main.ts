@@ -4,16 +4,20 @@
  */
 
 import './styles.css';
-// Initialize error buffer early — must be before any app code that may throw
 import './utils/runtimeErrors';
+
+// Register shell components (must be before DOM access)
+import './ui/shell/editorShell';
+import './ui/shell/toolbarControls';
 
 import { TerrainApp } from './engine/TerrainApp';
 import { mustEl } from './engine/types';
 import { createHud } from './ui/hud';
 import { createScreenshotUi } from './ui/screenshotUi';
-import { createDprButtons } from './ui/dprButtons';
 import { createDefaultDocument } from './engine/document';
 import { createTerrainSource } from './engine/terrain/terrainSource';
+import type { EditorShell } from './ui/shell/editorShell';
+import type { ToolbarControls } from './ui/shell/toolbarControls';
 
 // ── Parse URL params ──
 const params = new URLSearchParams(location.search);
@@ -76,19 +80,27 @@ setStartupStatus('Loading app...');
 const waterParam = params.get('water');
 const waterLevel = waterParam !== null ? parseFloat(waterParam) || 8 : null;
 
-// ── Create engine (WebGPU) ──
-const app = await TerrainApp.createAsync(document.body, worldDoc, terrainSource, {
+// ── Create engine — canvas goes into viewport host ──
+const viewportHost = mustEl('viewport-host');
+const app = await TerrainApp.createAsync(viewportHost, worldDoc, terrainSource, {
   debug: debugMode,
   dprMode,
   dprInitial,
   waterLevel,
 }, bakeArtifacts, terrainDomain);
 
-// ── Wire UI ──
-const dprBtns = createDprButtons(mustEl('dprRow'), app.dpr);
+// Move canvas into viewport slot
+const canvas = app.renderer.domElement;
+canvas.slot = 'viewport';
+viewportHost.appendChild(canvas);
 
+// ── Shell + toolbar wiring ──
+const shell = document.getElementById('shell') as EditorShell;
+const toolbar = document.getElementById('toolbar') as ToolbarControls;
+
+// Snapshot UI (still uses the old module for upload logic)
 const snapshotUi = createScreenshotUi(
-  mustEl<HTMLButtonElement>('screenshotBtn'),
+  document.createElement('button'), // dummy button — toolbar handles clicks
   mustEl('shotStatus'),
   {
     getLabel: () => `terrain_${app.centerCX}_${app.centerCZ}`,
@@ -96,39 +108,11 @@ const snapshotUi = createScreenshotUi(
     getSnapshotState: () => app.getSnapshotState(),
   },
 );
-
-// Expose snapshot API globally for automation / browser console
 window.__snapshot = snapshotUi.take;
 
 const hud = createHud(mustEl('fps'));
 
-// ── Presentation mode (bloom + post) ──
-const presentBtn = mustEl<HTMLButtonElement>('presentBtn');
-const presentParam = params.has('present');
-
-function updatePresentBtn() {
-  const on = app.isPresentationMode();
-  presentBtn.textContent = on ? 'Present On' : 'Present';
-  presentBtn.classList.toggle('active', on);
-}
-
-presentBtn.addEventListener('click', async () => {
-  await app.setPresentationMode(!app.isPresentationMode());
-  updatePresentBtn();
-});
-
-if (presentParam) {
-  app.setPresentationMode(true).then(updatePresentBtn);
-}
-
-// ── Exposure control ──
-const exposureParam = params.get('exposure');
-if (exposureParam) {
-  app.setExposure(parseFloat(exposureParam));
-}
-
-// ── Sun direction controls ──
-const sunBtn = mustEl<HTMLButtonElement>('sunBtn');
+// ── Toolbar event handlers ──
 const sunPresets = [
   { label: 'SW 35°', az: 210, el: 35 },
   { label: 'SE 25°', az: 135, el: 25 },
@@ -138,88 +122,74 @@ const sunPresets = [
 ];
 let sunPresetIdx = 0;
 
-// Apply URL params if present
-const sunAzParam = params.get('sunaz');
-const sunElParam = params.get('sunel');
-if (sunAzParam || sunElParam) {
-  const az = sunAzParam ? parseFloat(sunAzParam) : 210;
-  const el = sunElParam ? parseFloat(sunElParam) : 35;
-  app.setSunDirection(az, el);
-  sunBtn.textContent = `Sun: ${Math.round(az)}° ${Math.round(el)}°`;
+function syncToolbar() {
+  toolbar.clayMode = app.isClayMode();
+  toolbar.presentMode = app.isPresentationMode();
+  toolbar.overlayMode = app.getOverlayMode();
+  toolbar.sunLabel = sunPresets[sunPresetIdx].label;
 }
 
-sunBtn.addEventListener('click', () => {
+shell.addEventListener('toggle-present', async () => {
+  await app.setPresentationMode(!app.isPresentationMode());
+  syncToolbar();
+});
+
+shell.addEventListener('toggle-clay', () => {
+  app.toggleClayMode();
+  syncToolbar();
+});
+
+shell.addEventListener('cycle-overlay', () => {
+  app.cycleOverlay();
+  syncToolbar();
+});
+
+shell.addEventListener('cycle-sun', () => {
   sunPresetIdx = (sunPresetIdx + 1) % sunPresets.length;
   const p = sunPresets[sunPresetIdx];
   app.setSunDirection(p.az, p.el);
-  sunBtn.textContent = `Sun: ${p.label}`;
+  syncToolbar();
 });
 
-// ── Debug overlay toggle ──
-const overlayBtn = mustEl<HTMLButtonElement>('overlayBtn');
-const overlayLabels: Record<string, string> = {
-  none: 'Overlay: Off',
-  slope: 'Slope',
-  curvature: 'Curvature',
-  flow: 'Flow',
-};
-
-function updateOverlayButton() {
-  const mode = app.getOverlayMode();
-  overlayBtn.textContent = overlayLabels[mode];
-  overlayBtn.classList.toggle('active', mode !== 'none');
-}
-
-overlayBtn.addEventListener('click', () => {
-  app.cycleOverlay();
-  updateOverlayButton();
+shell.addEventListener('take-snapshot', () => {
+  snapshotUi.take();
 });
 
-// ── Clay mode toggle ──
-const clayBtn = mustEl<HTMLButtonElement>('clayBtn');
-const clayParam = params.get('clay');
-
-function updateClayButton() {
-  const on = app.isClayMode();
-  clayBtn.textContent = on ? 'Clay On' : 'Clay';
-  clayBtn.classList.toggle('active', on);
+// ── URL param overrides ──
+if (params.has('present')) {
+  app.setPresentationMode(true).then(syncToolbar);
 }
-
-if (clayParam !== null) {
+if (params.get('clay') !== null) {
   app.setClayMode(true);
 }
-
-clayBtn.addEventListener('click', () => {
-  app.toggleClayMode();
-  updateClayButton();
-});
-updateClayButton();
-
-// ── IBL toggle ──
-const iblBtn = mustEl<HTMLButtonElement>('iblBtn');
-const iblParam = new URLSearchParams(location.search).get('ibl');
-if (iblParam === 'off') {
+if (params.get('ibl') === 'off') {
   app.setIblEnabled(false);
 }
-
-function updateIblButton() {
-  const on = app.isIblEnabled();
-  iblBtn.textContent = on ? 'IBL On' : 'IBL Off';
-  iblBtn.classList.toggle('off', !on);
-  const params = new URLSearchParams(location.search);
-  params.set('ibl', on ? 'on' : 'off');
-  history.replaceState(null, '', '?' + params.toString());
+const exposureParam = params.get('exposure');
+if (exposureParam) app.setExposure(parseFloat(exposureParam));
+const sunAzParam = params.get('sunaz');
+const sunElParam = params.get('sunel');
+if (sunAzParam || sunElParam) {
+  app.setSunDirection(
+    sunAzParam ? parseFloat(sunAzParam) : 210,
+    sunElParam ? parseFloat(sunElParam) : 35,
+  );
 }
+syncToolbar();
 
-iblBtn.addEventListener('click', () => {
-  app.toggleIbl();
-  updateIblButton();
-});
-updateIblButton();
+// ── Status bar ──
+shell.statusText = terrainDomain.fromCache
+  ? `Cached · ±${terrainDomain.extent} · ${terrainDomain.bakeGridSize}²`
+  : `Baked ${terrainDomain.bakeTimeMs.toFixed(0)}ms · ±${terrainDomain.extent} · ${terrainDomain.bakeGridSize}²`;
 
 // ── Resize ──
 window.addEventListener('resize', () => {
-  app.resize(window.innerWidth, window.innerHeight);
+  const vp = viewportHost;
+  app.resize(vp.clientWidth, vp.clientHeight);
+});
+// Initial resize to viewport dimensions
+requestAnimationFrame(() => {
+  app.resize(viewportHost.clientWidth, viewportHost.clientHeight);
 });
 
 // ── Debug access ──
@@ -234,11 +204,9 @@ if (debugMode) {
 function animate() {
   requestAnimationFrame(animate);
   const { now } = app.update();
-
   const hudResult = hud.tick(now, app.dpr.ctrl);
   if (hudResult) {
     app.dpr.update(hudResult.fps, 500);
-    dprBtns.updateHighlights();
   }
 }
 

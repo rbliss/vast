@@ -3,32 +3,43 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Procedural Terrain Playground</title>
+  <title>VAST — Terrain</title>
 </head>
 <body>
-  <div id="info">
-    Move: WASD / arrows &nbsp;|&nbsp; Orbit: drag &nbsp;|&nbsp; Zoom: scroll<br>
-    <span id="fps"></span>
-  </div>
-  <div id="toolbar">
-    <div id="dprRow">
-      <span class="label">DPR</span>
-      <button data-dpr="auto">Auto</button>
-      <button data-dpr="1">1</button>
-      <button data-dpr="1.25">1.25</button>
-      <button data-dpr="1.5">1.5</button>
-      <button data-dpr="1.75">1.75</button>
-      <button data-dpr="2">2</button>
-    </div>
-    <button id="presentBtn" type="button">Present</button>
-    <button id="sunBtn" type="button">Sun: SW 35°</button>
-    <button id="clayBtn" type="button">Clay</button>
-    <button id="overlayBtn" type="button">Overlay: Off</button>
-    <button id="iblBtn" type="button">IBL On</button>
-    <button id="screenshotBtn" type="button">Take Snapshot</button>
-    <div id="shotStatus"></div>
-  </div>
   <div id="startup-status">Initializing...</div>
+
+  <vast-editor-shell id="shell">
+    <!-- Toolbar slot: controls rendered by main.ts -->
+    <vast-toolbar slot="toolbar" id="toolbar"></vast-toolbar>
+
+    <!-- Left pane: layer stack placeholder -->
+    <div slot="left" style="padding: 12px; font: 11px/1.4 monospace; color: #888;">
+      <div style="margin-bottom: 8px; color: #aaa; font-weight: bold;">Layers</div>
+      <div>Terrain</div>
+      <div>Materials</div>
+      <div>Scatter</div>
+      <div>Atmosphere</div>
+    </div>
+
+    <!-- Viewport: canvas injected by main.ts -->
+    <div slot="viewport" id="viewport-host"></div>
+
+    <!-- Overlay: HUD info -->
+    <div slot="overlay" id="info" style="position:absolute; top:8px; left:8px;">
+      Move: WASD / arrows | Orbit: drag | Zoom: scroll<br>
+      <span id="fps"></span>
+    </div>
+
+    <!-- Right pane: inspector placeholder -->
+    <div slot="right" style="padding: 12px; font: 11px/1.4 monospace; color: #888;">
+      <div style="margin-bottom: 8px; color: #aaa; font-weight: bold;">Inspector</div>
+      <div id="inspectorContent">Select a layer to edit</div>
+    </div>
+
+    <!-- Bottom bar content -->
+    <span slot="bottom" id="shotStatus" style="font: 11px/1 monospace; color: #b8d6ff;"></span>
+  </vast-editor-shell>
+
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
