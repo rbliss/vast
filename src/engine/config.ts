@@ -16,7 +16,7 @@ export const ROCK_WORLD_SIZE = 10;
 export const GRASS_WORLD_SIZE = 8;
 export const DIRT_WORLD_SIZE = 6;
 
-export const LOD_NEAR: LodLevel      = { segments: 128, displacement: true };
+export const LOD_NEAR: LodLevel      = { segments: 256, displacement: true };
 export const LOD_MID: LodLevel       = { segments: 64,  displacement: true };
 export const LOD_FAR: LodLevel       = { segments: 32,  displacement: false };
 export const LOD_ULTRA_FAR: LodLevel = { segments: 16,  displacement: false };
