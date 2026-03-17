@@ -19,7 +19,8 @@ import { createTerrainMaterials } from './materials/terrainMaterial';
 import { createNodeTerrainMaterials } from './materials/terrainMaterialNode';
 import { createChunkSlot, rebuildChunkSlot } from './terrain/chunkGeometry';
 import { createFoliageSystem } from './foliage/foliageSystem';
-import { CHUNK_SIZE, LOD_NEAR, LOD_MID, LOD_FAR, GRID_RADIUS, TERRAIN_ENV_INTENSITY, FOLIAGE_ENV_INTENSITY } from './config';
+import { CHUNK_SIZE, LOD_NEAR, LOD_MID, LOD_FAR, GRID_RADIUS, FOLIAGE_ENV_INTENSITY } from './config';
+import { TERRAIN_ENV_MAP_INTENSITY, HEMI_INTENSITY_IBL_ON, HEMI_INTENSITY_IBL_OFF } from './materials/terrain/featureModel';
 
 export class TerrainApp {
   readonly debug: boolean;
@@ -100,9 +101,9 @@ export class TerrainApp {
       : createTerrainMaterials(this.textures);
     if (this._envMap) {
       matDisp.envMap = this._envMap;
-      matDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
+      matDisp.envMapIntensity = TERRAIN_ENV_MAP_INTENSITY;
       matNoDisp.envMap = this._envMap;
-      matNoDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
+      matNoDisp.envMapIntensity = TERRAIN_ENV_MAP_INTENSITY;
     }
     this.matDisp = matDisp;
     this.matNoDisp = matNoDisp;
@@ -121,21 +122,20 @@ export class TerrainApp {
   }
 
   // ── IBL toggle ──
-  private static readonly HEMI_IBL_ON = 0.5;
-  private static readonly HEMI_IBL_OFF = 0.6;
+  // Hemi intensity values from shared feature model
 
   isIblEnabled(): boolean { return this._iblEnabled; }
 
   setIblEnabled(enabled: boolean): void {
     this._iblEnabled = enabled;
     if (enabled) {
-      this.matDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
-      this.matNoDisp.envMapIntensity = TERRAIN_ENV_INTENSITY;
-      this._hemiLight.intensity = TerrainApp.HEMI_IBL_ON;
+      this.matDisp.envMapIntensity = TERRAIN_ENV_MAP_INTENSITY;
+      this.matNoDisp.envMapIntensity = TERRAIN_ENV_MAP_INTENSITY;
+      this._hemiLight.intensity = HEMI_INTENSITY_IBL_ON;
     } else {
       this.matDisp.envMapIntensity = 0;
       this.matNoDisp.envMapIntensity = 0;
-      this._hemiLight.intensity = TerrainApp.HEMI_IBL_OFF;
+      this._hemiLight.intensity = HEMI_INTENSITY_IBL_OFF;
     }
   }
 

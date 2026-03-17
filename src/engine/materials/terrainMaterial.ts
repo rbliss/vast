@@ -12,22 +12,30 @@ import * as THREE from 'three';
 import type { MeshStandardMaterial } from 'three';
 import { CHUNK_SIZE, ROCK_WORLD_SIZE, GRASS_WORLD_SIZE, DIRT_WORLD_SIZE } from '../config';
 import type { TextureSet, TerrainMaterials } from '../types';
+import {
+  ROCK_SLOPE_MIN, ROCK_SLOPE_MAX, ROCK_HEIGHT_MIN, ROCK_HEIGHT_MAX,
+  ROCK_HEIGHT_BIAS_STRENGTH, BIOME_NOISE_FREQUENCY,
+  GRASS_NOISE_MIN, GRASS_NOISE_MAX, DIRT_NOISE_MIN, DIRT_NOISE_MAX,
+  DIRT_WEIGHT_SCALE, TRIPLANAR_SHARPNESS,
+  DISPLACEMENT_SCALE, DISPLACEMENT_BIAS, DISPLACEMENT_FADE_DISTANCE,
+  ROCK_NORMAL_SCALE, TERRAIN_ENV_MAP_INTENSITY,
+} from './terrain/featureModel';
 
 export function createTerrainMaterials(textures: TextureSet): TerrainMaterials {
   function makeMat(useDisplacement: boolean): MeshStandardMaterial {
     const mat = new THREE.MeshStandardMaterial({
       map: textures.rockDiff,
       normalMap: textures.rockNorm,
-      normalScale: new THREE.Vector2(1.0, 1.0),
+      normalScale: new THREE.Vector2(ROCK_NORMAL_SCALE, ROCK_NORMAL_SCALE),
       roughnessMap: textures.rockRough,
       aoMap: textures.rockAo,
       aoMapIntensity: 1.0,
-      envMapIntensity: 0.3,
+      envMapIntensity: TERRAIN_ENV_MAP_INTENSITY,
     });
     if (useDisplacement) {
       mat.displacementMap = textures.rockDisp;
-      mat.displacementScale = 0.25;
-      mat.displacementBias = -0.1;
+      mat.displacementScale = DISPLACEMENT_SCALE;
+      mat.displacementBias = DISPLACEMENT_BIAS;
     }
     return mat;
   }
@@ -67,7 +75,7 @@ function applyBiomeShader(material: MeshStandardMaterial, tex: TextureSet): void
           min(transformed.x + chunkHalf, chunkHalf - transformed.x),
           min(transformed.z + chunkHalf, chunkHalf - transformed.z)
         );
-        float dispFade = smoothstep(0.0, 3.0, edgeDist);
+        float dispFade = smoothstep(0.0, ${DISPLACEMENT_FADE_DISTANCE.toFixed(1)}, edgeDist);
         transformed += normalize(objectNormal) * (
           texture2D(displacementMap, vDisplacementMapUv).x * displacementScale * dispFade
           + displacementBias * dispFade
@@ -117,7 +125,7 @@ function applyBiomeShader(material: MeshStandardMaterial, tex: TextureSet): void
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',
       `
-      vec3 triWeights = pow(abs(vWorldNormal), vec3(4.0));
+      vec3 triWeights = pow(abs(vWorldNormal), vec3(${TRIPLANAR_SHARPNESS.toFixed(1)}));
       triWeights /= (triWeights.x + triWeights.y + triWeights.z + 1e-6);
       float slope = 1.0 - abs(vWorldNormal.y);
       vec2 triUvX = vWorldPosition.zy * rockScale;
@@ -126,12 +134,12 @@ function applyBiomeShader(material: MeshStandardMaterial, tex: TextureSet): void
       vec2 grassUv = vWorldPosition.xz * grassScale;
       vec2 dirtUv  = vWorldPosition.xz * dirtScale;
 
-      float bNoise = biomeNoise(vWorldPosition.xz * 0.03);
-      float heightBias = smoothstep(4.0, 9.0, vWorldPosition.y) * 0.3;
-      float wRock  = smoothstep(0.35, 0.65, slope + heightBias);
+      float bNoise = biomeNoise(vWorldPosition.xz * ${BIOME_NOISE_FREQUENCY.toFixed(2)});
+      float heightBias = smoothstep(${ROCK_HEIGHT_MIN.toFixed(1)}, ${ROCK_HEIGHT_MAX.toFixed(1)}, vWorldPosition.y) * ${ROCK_HEIGHT_BIAS_STRENGTH.toFixed(1)};
+      float wRock  = smoothstep(${ROCK_SLOPE_MIN.toFixed(2)}, ${ROCK_SLOPE_MAX.toFixed(2)}, slope + heightBias);
       float flatWeight = 1.0 - wRock;
-      float wGrass = flatWeight * smoothstep(0.25, 0.6, bNoise);
-      float wDirt  = flatWeight * (1.0 - smoothstep(0.2, 0.55, bNoise)) * 0.6;
+      float wGrass = flatWeight * smoothstep(${GRASS_NOISE_MIN.toFixed(2)}, ${GRASS_NOISE_MAX.toFixed(1)}, bNoise);
+      float wDirt  = flatWeight * (1.0 - smoothstep(${DIRT_NOISE_MIN.toFixed(1)}, ${DIRT_NOISE_MAX.toFixed(2)}, bNoise)) * ${DIRT_WEIGHT_SCALE.toFixed(1)};
       float wSum = wRock + wGrass + wDirt + 1e-6;
       wRock /= wSum; wGrass /= wSum; wDirt /= wSum;
 

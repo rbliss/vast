@@ -13,10 +13,16 @@ import {
   positionWorld, positionLocal, normalWorld, normalLocal,
 } from 'three/tsl';
 
-import {
-  CHUNK_SIZE, ROCK_WORLD_SIZE, GRASS_WORLD_SIZE, DIRT_WORLD_SIZE,
-} from '../config';
+import { CHUNK_SIZE, ROCK_WORLD_SIZE, GRASS_WORLD_SIZE, DIRT_WORLD_SIZE } from '../config';
 import type { TextureSet, TerrainMaterials } from '../types';
+import {
+  ROCK_SLOPE_MIN, ROCK_SLOPE_MAX, ROCK_HEIGHT_MIN, ROCK_HEIGHT_MAX,
+  ROCK_HEIGHT_BIAS_STRENGTH, BIOME_NOISE_FREQUENCY,
+  GRASS_NOISE_MIN, GRASS_NOISE_MAX, DIRT_NOISE_MIN, DIRT_NOISE_MAX,
+  DIRT_WEIGHT_SCALE, TRIPLANAR_SHARPNESS,
+  DISPLACEMENT_SCALE, DISPLACEMENT_BIAS, DISPLACEMENT_FADE_DISTANCE,
+  TERRAIN_ENV_MAP_INTENSITY,
+} from './terrain/featureModel';
 
 // ── Pure expression helpers ──
 
@@ -38,7 +44,7 @@ const biomeNoise = Fn(([p]: [any]) => {
 });
 
 const triSample = Fn(([tex, wPos, wNorm, scale]: [any, any, any, any]) => {
-  const w = pow(abs(wNorm), vec3(4));
+  const w = pow(abs(wNorm), vec3(TRIPLANAR_SHARPNESS));
   const ws = w.div(w.x.add(w.y).add(w.z).add(1e-6));
   return texture(tex, wPos.zy.mul(scale)).mul(ws.x)
     .add(texture(tex, wPos.xz.mul(scale)).mul(ws.y))
@@ -48,12 +54,12 @@ const triSample = Fn(([tex, wPos, wNorm, scale]: [any, any, any, any]) => {
 // Shared biome weight computation — returns vec3(rock, grass, dirt) normalized
 const biomeWeights = Fn(([wPos, wNorm]: [any, any]) => {
   const slope = float(1).sub(abs(wNorm.y));
-  const bn = biomeNoise(wPos.xz.mul(0.03));
-  const hBias = smoothstep(float(4), float(9), wPos.y).mul(0.3);
-  const rock = smoothstep(float(0.35), float(0.65), slope.add(hBias));
+  const bn = biomeNoise(wPos.xz.mul(BIOME_NOISE_FREQUENCY));
+  const hBias = smoothstep(float(ROCK_HEIGHT_MIN), float(ROCK_HEIGHT_MAX), wPos.y).mul(ROCK_HEIGHT_BIAS_STRENGTH);
+  const rock = smoothstep(float(ROCK_SLOPE_MIN), float(ROCK_SLOPE_MAX), slope.add(hBias));
   const flat_ = float(1).sub(rock);
-  const grass = flat_.mul(smoothstep(float(0.25), float(0.6), bn));
-  const dirt = flat_.mul(float(1).sub(smoothstep(float(0.2), float(0.55), bn))).mul(0.6);
+  const grass = flat_.mul(smoothstep(float(GRASS_NOISE_MIN), float(GRASS_NOISE_MAX), bn));
+  const dirt = flat_.mul(float(1).sub(smoothstep(float(DIRT_NOISE_MIN), float(DIRT_NOISE_MAX), bn))).mul(DIRT_WEIGHT_SCALE);
   const sum = rock.add(grass).add(dirt).add(1e-6);
   return vec3(rock.div(sum), grass.div(sum), dirt.div(sum));
 });
@@ -61,7 +67,7 @@ const biomeWeights = Fn(([wPos, wNorm]: [any, any]) => {
 // Rock tri-planar normal with Whiteout blending (Golus method)
 const triplanarRockNormal = Fn(([tex, wPos, wNorm, scale]: [any, any, any, any]) => {
   const as = sign(wNorm);
-  const w = pow(abs(wNorm), vec3(4));
+  const w = pow(abs(wNorm), vec3(TRIPLANAR_SHARPNESS));
   const ws = w.div(w.x.add(w.y).add(w.z).add(1e-6));
 
   // Sample normal maps on each axis
@@ -145,14 +151,14 @@ export function createNodeTerrainMaterials(textures: TextureSet): TerrainMateria
           min(lp.x.add(chunkHalf), chunkHalf.sub(lp.x)),
           min(lp.z.add(chunkHalf), chunkHalf.sub(lp.z)),
         );
-        const fade = smoothstep(float(0), float(3), edgeDist);
+        const fade = smoothstep(float(0), float(DISPLACEMENT_FADE_DISTANCE), edgeDist);
         const disp = texture(textures.rockDisp, positionWorld.xz.mul(rk)).x;
-        const offset = ln.mul(disp.mul(0.25).sub(0.1).mul(fade));
+        const offset = ln.mul(disp.mul(DISPLACEMENT_SCALE).sub(Math.abs(DISPLACEMENT_BIAS)).mul(fade));
         return lp.add(offset);
       })();
     }
 
-    mat.envMapIntensity = 0.08;
+    mat.envMapIntensity = TERRAIN_ENV_MAP_INTENSITY;
 
     return mat;
   }
