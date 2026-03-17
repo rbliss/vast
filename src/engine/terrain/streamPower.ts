@@ -35,6 +35,16 @@ export interface StreamPowerParams {
   upliftRate: number;
   /** Maximum erosion per cell per iteration (prevents runaway incision) */
   maxErosion: number;
+  /** Enable sediment transport and deposition pass */
+  depositionEnabled: boolean;
+  /** Fraction of eroded material that becomes transportable sediment */
+  sedimentFraction: number;
+  /** Transport capacity coefficient: Tc = Kd * A^md * S^nd */
+  transportK: number;
+  /** Transport area exponent */
+  transportAreaExp: number;
+  /** Transport slope exponent */
+  transportSlopeExp: number;
 }
 
 export const DEFAULT_STREAM_POWER: StreamPowerParams = {
@@ -47,6 +57,11 @@ export const DEFAULT_STREAM_POWER: StreamPowerParams = {
   minSlope: 0.001,
   upliftRate: 0.15,
   maxErosion: 0.5,
+  depositionEnabled: true,
+  sedimentFraction: 0.6,
+  transportK: 0.08,
+  transportAreaExp: 0.4,
+  transportSlopeExp: 1.1,
 };
 
 // ── D8 flow direction + accumulation ──
@@ -167,6 +182,62 @@ function diffuse(
   grid.set(tmp);
 }
 
+// ── Sediment transport and deposition ──
+
+/**
+ * Route sediment downstream along D8 receivers.
+ * Deposit where transport capacity (Tc = Kd * A^md * S^nd) is exceeded.
+ *
+ * Creates: fans at channel exits, aprons at mountain fronts,
+ * valley fill where slope decreases.
+ */
+function transportAndDeposit(
+  grid: Float32Array,
+  sedimentFlux: Float32Array,
+  area: Float32Array,
+  receiver: Int32Array,
+  slopes: Float32Array,
+  w: number, h: number, cellSize: number,
+  transportK: number, transportAreaExp: number, transportSlopeExp: number,
+  minSlope: number,
+): void {
+  const n = w * h;
+
+  // Sort cells by height descending — process upstream before downstream
+  const sorted = new Uint32Array(n);
+  for (let i = 0; i < n; i++) sorted[i] = i;
+  sorted.sort((a, b) => grid[b] - grid[a]);
+
+  for (let i = 0; i < n; i++) {
+    const idx = sorted[i];
+    const x = idx % w;
+    const z = (idx - x) / w;
+    if (x < 1 || x >= w - 1 || z < 1 || z >= h - 1) continue;
+
+    const flux = sedimentFlux[idx];
+    if (flux <= 0) continue;
+
+    const A = area[idx];
+    const S = Math.max(slopes[idx], minSlope);
+
+    // Transport capacity: how much sediment this cell can carry
+    const capacity = transportK * Math.pow(A, transportAreaExp) * Math.pow(S, transportSlopeExp);
+
+    if (flux > capacity) {
+      // Over capacity: deposit the excess
+      const deposit = (flux - capacity) * 0.5; // Deposit half the excess per step
+      grid[idx] += deposit;
+      sedimentFlux[idx] -= deposit;
+    }
+
+    // Pass remaining sediment to receiver
+    const recv = receiver[idx];
+    if (recv >= 0) {
+      sedimentFlux[recv] += sedimentFlux[idx];
+    }
+  }
+}
+
 // ── Main stream-power erosion loop ──
 
 /**
@@ -187,16 +258,24 @@ export function streamPowerErosion(
   cellSize: number, params: StreamPowerParams,
 ): void {
   const { iterations, erosionK, areaExponent, slopeExponent, dt,
-          diffusionRate, minSlope, upliftRate, maxErosion } = params;
+          diffusionRate, minSlope, upliftRate, maxErosion,
+          depositionEnabled, sedimentFraction, transportK,
+          transportAreaExp, transportSlopeExp } = params;
+
+  const n = w * h;
+  // Sediment flux: how much sediment is being carried through each cell
+  const sedimentFlux = depositionEnabled ? new Float32Array(n) : null;
 
   for (let iter = 0; iter < iterations; iter++) {
-    // Step 1: Flow accumulation
-    const { area } = computeFlowAccumulation(grid, w, h, cellSize);
+    // Step 1: Flow accumulation + receiver graph
+    const { area, receiver } = computeFlowAccumulation(grid, w, h, cellSize);
 
     // Step 2: Slopes
     const slopes = computeSlopes(grid, w, h, cellSize);
 
-    // Step 3: Stream-power incision
+    // Step 3: Stream-power incision + sediment production
+    if (sedimentFlux) sedimentFlux.fill(0);
+
     for (let z = 1; z < h - 1; z++) {
       for (let x = 1; x < w - 1; x++) {
         const idx = z * w + x;
@@ -208,20 +287,35 @@ export function streamPowerErosion(
           erosionK * Math.pow(A, areaExponent) * Math.pow(S, slopeExponent),
           maxErosion,
         );
-        grid[idx] -= dt * erosion;
+        const eroded = dt * erosion;
+        grid[idx] -= eroded;
+
+        // Produce transportable sediment
+        if (sedimentFlux) {
+          sedimentFlux[idx] += eroded * sedimentFraction;
+        }
 
         // Uplift (optional, maintains relief)
         grid[idx] += upliftRate;
       }
     }
 
-    // Step 4: Hillslope diffusion
+    // Step 4: Sediment transport and deposition
+    // Route sediment downstream; deposit where transport capacity drops
+    if (sedimentFlux) {
+      transportAndDeposit(
+        grid, sedimentFlux, area, receiver, slopes,
+        w, h, cellSize, transportK, transportAreaExp, transportSlopeExp, minSlope,
+      );
+    }
+
+    // Step 5: Hillslope diffusion
     if (diffusionRate > 0) {
       diffuse(grid, w, h, cellSize, diffusionRate);
     }
 
     // Clamp to non-negative
-    for (let i = 0; i < grid.length; i++) {
+    for (let i = 0; i < n; i++) {
       if (grid[i] < 0) grid[i] = 0;
     }
   }
