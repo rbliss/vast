@@ -12,6 +12,7 @@ import type { RendererBackend, RendererLike } from './backend/types';
 import type { TerrainSource } from './terrain/terrainSource';
 import type { WorldDocumentV0 } from './document';
 import { applyDebugOverlay, type OverlayMode } from './terrain/debugOverlay';
+import { generateFieldTextures, type FieldTextures } from './terrain/fieldTextures';
 
 import { getBackend } from './backend';
 import { createOrbitMovement } from './controls/orbitMovement';
@@ -72,8 +73,11 @@ export class TerrainApp {
       preserveDrawingBuffer: opts.debug,
     });
 
+    // Generate field textures from the terrain source for material blending
+    const fieldTextures = generateFieldTextures(terrainSource, 256, 200);
+
     const { createNodeTerrainMaterials } = await import('./materials/terrainMaterialNode');
-    return new TerrainApp(container, doc, terrainSource, opts, backend, renderer, reversedDepthSupported, createNodeTerrainMaterials);
+    return new TerrainApp(container, doc, terrainSource, opts, backend, renderer, reversedDepthSupported, createNodeTerrainMaterials, fieldTextures);
   }
 
   private constructor(
@@ -84,7 +88,8 @@ export class TerrainApp {
     backend: RendererBackend,
     renderer: RendererLike,
     reversedDepthSupported: boolean,
-    materialFactory: (textures: TextureSet) => TerrainMaterials,
+    materialFactory: (textures: TextureSet, fieldMap?: any, fieldExtent?: number) => TerrainMaterials,
+    fieldTextures: FieldTextures | null,
   ) {
     this.debug = opts.debug || false;
     this.document = doc;
@@ -123,9 +128,13 @@ export class TerrainApp {
     this.controls = controls;
     this._applyMovement = applyMovement;
 
-    // Materials — TSL/WebGPU
+    // Materials — TSL/WebGPU (field-driven if available)
     this.textures = loadTextureSet(this.renderer);
-    const { matDisp, matNoDisp } = materialFactory(this.textures);
+    const { matDisp, matNoDisp } = materialFactory(
+      this.textures,
+      fieldTextures?.fieldMap,
+      fieldTextures?.extent,
+    );
     if (this._envMap) {
       matDisp.envMap = this._envMap;
       matDisp.envMapIntensity = TERRAIN_ENV_MAP_INTENSITY;
