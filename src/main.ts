@@ -10,6 +10,7 @@ import './utils/runtimeErrors';
 import './ui/shell/editorShell';
 import './ui/shell/toolbarControls';
 import './ui/shell/inspectorPanel';
+import './ui/shell/referencePanel';
 
 import { TerrainApp } from './engine/TerrainApp';
 import { mustEl } from './engine/types';

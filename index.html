@@ -12,13 +12,16 @@
     <!-- Toolbar slot: controls rendered by main.ts -->
     <vast-toolbar slot="toolbar" id="toolbar"></vast-toolbar>
 
-    <!-- Left pane: layer stack placeholder -->
-    <div slot="left" style="padding: 12px; font: 11px/1.4 monospace; color: #888;">
-      <div style="margin-bottom: 8px; color: #aaa; font-weight: bold;">Layers</div>
-      <div>Terrain</div>
-      <div>Materials</div>
-      <div>Scatter</div>
-      <div>Atmosphere</div>
+    <!-- Left pane: layers + reference images -->
+    <div slot="left" style="overflow-y: auto; height: 100%;">
+      <div style="padding: 12px; font: 11px/1.4 monospace; color: #888;">
+        <div style="margin-bottom: 8px; color: #aaa; font-weight: bold;">Layers</div>
+        <div>Terrain</div>
+        <div>Materials</div>
+        <div>Scatter</div>
+        <div>Atmosphere</div>
+      </div>
+      <vast-references></vast-references>
     </div>
 
     <!-- Viewport: canvas injected by main.ts -->
