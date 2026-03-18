@@ -12,7 +12,7 @@ import type { RendererBackend, RendererLike } from './backend/types';
 import type { TerrainSource } from './terrain/terrainSource';
 import type { TerrainSourceResult } from './terrain/terrainSource';
 import { EditableHeightfield, type BrushStamp } from './terrain/editableHeightfield';
-// Erosion now runs in sculptErosion.worker.ts
+import { runSculptErosion } from './bake/sculptErosionManager';
 import type { ScatterParams } from './foliage/foliageSystem';
 import type { WorldDocument } from './document';
 import type { TerrainBakeArtifacts } from './bake/types';
@@ -493,93 +493,41 @@ export class TerrainApp {
     if (!this._editableHF) return;
 
     const hf = this._editableHF;
-    const n = hf.gridSize;
-    const cs = hf.cellSize;
-    const extent = hf.extent;
 
     // Save undo state before erosion
     hf.beginStroke();
 
-    // Copy grid for transfer to worker (worker takes ownership)
+    // Copy grid for transfer to worker
     const gridCopy = new Float32Array(hf.grid);
 
-    try {
-      const worker = new Worker(
-        new URL('../bake/sculptErosion.worker.ts', import.meta.url),
-        { type: 'module' },
-      );
-
-      const timeout = setTimeout(() => {
-        worker.terminate();
-        hf.endStroke();
-        opts.onError?.('Erosion timed out (120s)');
-      }, 120000);
-
-      worker.onmessage = (e: MessageEvent) => {
-        const msg = e.data;
-
-        if (msg.type === 'progress') {
-          opts.onProgress?.(msg.iteration);
-        }
-
-        if (msg.type === 'result') {
-          clearTimeout(timeout);
-          worker.terminate();
-
-          // Copy eroded grid back into the heightfield
-          hf.grid.set(new Float32Array(msg.grid));
-
-          // Commit to undo
-          hf.endStroke();
-
-          // Force rebuild all chunks
-          this.centerCX = Infinity;
-          this.centerCZ = Infinity;
-          this.updateChunks();
-
-          console.log(`[erosion] worker completed in ${msg.elapsed.toFixed(0)}ms`);
-          opts.onComplete?.();
-        }
-
-        if (msg.type === 'error') {
-          clearTimeout(timeout);
-          worker.terminate();
-          hf.endStroke();
-          console.error('[erosion] worker error:', msg.message);
-          opts.onError?.(msg.message);
-        }
-      };
-
-      worker.onerror = (err) => {
-        clearTimeout(timeout);
-        worker.terminate();
-        hf.endStroke();
-        opts.onError?.(err.message);
-      };
-
-      // Send grid to worker (transferred, zero-copy)
-      worker.postMessage({
-        type: 'erode',
-        grid: gridCopy,
-        gridSize: n,
-        extent,
-        cellSize: cs,
-        iterations: opts.iterations ?? 15,
-        erosionStrength: opts.erosionStrength ?? 0.006,
-        channelGeometry: opts.channelGeometry !== false,
-        hillslope: opts.hillslope !== false,
-        resistance: opts.resistance !== false,
-      }, { transfer: [gridCopy.buffer] });
-
-      console.log('[erosion] dispatched to worker');
-    } catch (err) {
-      // Fallback: run on main thread
-      console.warn('[erosion] worker failed, running on main thread:', err);
-      const { streamPowerErosion: sp, DEFAULT_STREAM_POWER: defaults } = require('./terrain/streamPower');
-      // ... fallback omitted for brevity, endStroke handles cleanup
+    runSculptErosion({
+      grid: gridCopy,
+      gridSize: hf.gridSize,
+      extent: hf.extent,
+      cellSize: hf.cellSize,
+      iterations: opts.iterations ?? 15,
+      erosionStrength: opts.erosionStrength ?? 0.006,
+      channelGeometry: opts.channelGeometry !== false,
+      hillslope: opts.hillslope !== false,
+      resistance: opts.resistance !== false,
+      onProgress: opts.onProgress,
+    }).then((result) => {
+      // Copy eroded grid back
+      hf.grid.set(result.grid);
       hf.endStroke();
-      opts.onError?.('Worker unavailable');
-    }
+
+      // Force rebuild all chunks
+      this.centerCX = Infinity;
+      this.centerCZ = Infinity;
+      this.updateChunks();
+
+      console.log(`[erosion] completed in ${result.elapsed.toFixed(0)}ms`);
+      opts.onComplete?.();
+    }).catch((err) => {
+      hf.endStroke();
+      console.error('[erosion] failed:', err);
+      opts.onError?.(err.message || String(err));
+    });
   }
 
   /** Apply a brush stamp and rebuild affected chunks */
