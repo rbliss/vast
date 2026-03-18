@@ -346,13 +346,19 @@ shell.addEventListener('reset-canvas', () => {
 
 shell.addEventListener('apply-erosion', ((e: CustomEvent) => {
   if (!app.isEditable) return;
-  shell.statusText = 'Eroding terrain...';
-  // Run async to let UI update
+  const opts = e?.detail ?? {};
+  const iterations = opts.iterations ?? 15;
+  shell.statusText = `Eroding terrain: 0/${iterations} iterations...`;
+  // Run async to let UI update before blocking computation
   setTimeout(() => {
-    const opts = e?.detail ?? {};
-    app.applyErosion(opts);
-    shell.statusText = 'Erosion applied (Cmd+Z to undo)';
-    setTimeout(() => { shell.statusText = runtimeStore.statusLine; }, 3000);
+    app.applyErosion({
+      ...opts,
+      onProgress: (iter: number) => {
+        shell.statusText = `Eroding terrain: ${iter}/${iterations} iterations...`;
+      },
+    });
+    shell.statusText = `Erosion complete — ${iterations} iterations (Cmd+Z to undo)`;
+    setTimeout(() => { shell.statusText = runtimeStore.statusLine; }, 4000);
   }, 50);
 }) as EventListener);
 

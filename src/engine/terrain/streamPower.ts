@@ -425,6 +425,7 @@ export function streamPowerErosion(
   grid: Float32Array, w: number, h: number,
   cellSize: number, params: StreamPowerParams,
   resistanceGen?: ResistanceGenerator,
+  onProgress?: (iteration: number) => void,
 ): StreamPowerResult {
   const { iterations, erosionK, areaExponent, slopeExponent, dt,
           diffusionRate, minSlope, upliftRate, maxErosion,
@@ -442,6 +443,8 @@ export function streamPowerErosion(
   let lastSlopes: Float32Array = new Float32Array(n);
 
   for (let iter = 0; iter < iterations; iter++) {
+    if (onProgress) onProgress(iter + 1);
+
     // Step 0: Recompute resistance from current heights (dynamic strata)
     const resistance = resistanceGen ? resistanceGen(grid) : null;
 

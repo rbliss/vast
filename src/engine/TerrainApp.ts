@@ -489,6 +489,7 @@ export class TerrainApp {
     channelGeometry?: boolean;
     hillslope?: boolean;
     resistance?: boolean;
+    onProgress?: (iteration: number) => void;
   } = {}): void {
     if (!this._editableHF) return;
 
@@ -516,7 +517,7 @@ export class TerrainApp {
       : undefined;
 
     // Stream-power erosion
-    const spResult = streamPowerErosion(grid, n, n, cs, spParams, resistanceGen);
+    const spResult = streamPowerErosion(grid, n, n, cs, spParams, resistanceGen, opts.onProgress);
     console.log(`[erosion] stream-power: ${spParams.iterations} iterations`);
 
     // Channel geometry

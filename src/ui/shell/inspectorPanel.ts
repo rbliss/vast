@@ -277,7 +277,7 @@ export class InspectorPanel extends LitElement {
           <span class="class-tag tag-rebake">Apply</span>
         </div>
         ${this._erosionOpen ? html`<div class="section-body">
-          ${this._slider('Iterations', this._canvasErosionIter, 5, 40, 1, v => { this._canvasErosionIter = v; })}
+          ${this._slider('Iterations', this._canvasErosionIter, 5, 100, 1, v => { this._canvasErosionIter = v; })}
           ${this._slider('Strength', this._canvasErosionK, 0.001, 0.02, 0.001, v => { this._canvasErosionK = v; })}
           <button class="rebake-btn" @click=${() => this._fire('apply-erosion', {
             iterations: this._canvasErosionIter,
