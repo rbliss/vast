@@ -43,6 +43,11 @@ export class InspectorPanel extends LitElement {
   @state() private _alpineCutoff = 0.78;
   @state() private _debrisEmphasis = 1.0;
 
+  // Display
+  @state() private _clayMode = false;
+  @state() private _overlayMode = 'none';
+  @state() private _presentMode = false;
+
   // State
   @state() private _needsRebake = false;
   @state() private _bakeProgress = '';
@@ -57,8 +62,9 @@ export class InspectorPanel extends LitElement {
   @state() private _erosionOpen = true;
 
   // Section collapse
-  @state() private _sceneOpen = true;
-  @state() private _terrainOpen = true;
+  @state() private _displayOpen = true;
+  @state() private _sceneOpen = false;
+  @state() private _terrainOpen = false;
   @state() private _materialsOpen = false;
   @state() private _scatterOpen = false;
   @state() private _brushOpen = true;
@@ -114,6 +120,9 @@ export class InspectorPanel extends LitElement {
     this._exposure = viewportStore.exposure;
     this._waterLevel = viewportStore.waterLevel ?? 0;
     this._cloudCoverage = viewportStore.cloudCoverage;
+    this._clayMode = viewportStore.clayMode;
+    this._overlayMode = viewportStore.overlayMode;
+    this._presentMode = viewportStore.presentationMode;
     this._preset = projectStore.presetName;
     this._needsRebake = authoringStore.needsRebake;
     this._bakeProgress = authoringStore.bakeProgress;
@@ -175,11 +184,49 @@ export class InspectorPanel extends LitElement {
     return html`
       ${this._renderBrush()}
       ${this._renderErosion()}
+      ${this._renderDisplay()}
       ${this._renderScene()}
       ${this._renderTerrain()}
       ${this._renderMaterials()}
       ${this._renderScatter()}
     `;
+  }
+
+  // ── Display (clay, overlay, present, sun) ──
+  private _renderDisplay() {
+    return html`
+      <div class="section">
+        <div class="section-header" @click=${() => this._displayOpen = !this._displayOpen}>
+          <span class="arrow">${this._displayOpen ? '▼' : '▶'}</span>
+          Display
+          <span class="class-tag tag-live">Live</span>
+        </div>
+        ${this._displayOpen ? html`<div class="section-body">
+          <div class="field">
+            <label>Mode</label>
+            <button style="flex:1; padding:4px 8px; font:10px/1 monospace; background:${this._clayMode ? 'rgba(180,160,140,0.8)' : 'rgba(60,60,65,0.8)'}; color:${this._clayMode ? '#fff' : '#bbb'}; border:0; border-radius:3px; cursor:pointer;"
+              @click=${() => this._fire('toggle-clay', null)}>
+              ${this._clayMode ? 'Clay' : 'Textured'}
+            </button>
+          </div>
+          <div class="field">
+            <label>Overlay</label>
+            <button style="flex:1; padding:4px 8px; font:10px/1 monospace; background:${this._overlayMode !== 'none' ? 'rgba(60,140,100,0.8)' : 'rgba(60,60,65,0.8)'}; color:${this._overlayMode !== 'none' ? '#fff' : '#bbb'}; border:0; border-radius:3px; cursor:pointer;"
+              @click=${() => this._fire('cycle-overlay', null)}>
+              ${this._overlayMode === 'none' ? 'Off' : this._overlayMode}
+            </button>
+          </div>
+          <div class="field">
+            <label>Present</label>
+            <button style="flex:1; padding:4px 8px; font:10px/1 monospace; background:${this._presentMode ? 'rgba(200,160,60,0.8)' : 'rgba(60,60,65,0.8)'}; color:${this._presentMode ? '#fff' : '#bbb'}; border:0; border-radius:3px; cursor:pointer;"
+              @click=${() => this._fire('toggle-present', null)}>
+              ${this._presentMode ? 'On' : 'Off'}
+            </button>
+          </div>
+          ${this._slider('Sun Az', this._sunAz, 0, 360, 1, v => this._fire('set-sun', { azimuth: v, elevation: this._sunEl }), '°')}
+          ${this._slider('Sun El', this._sunEl, 5, 85, 1, v => this._fire('set-sun', { azimuth: this._sunAz, elevation: v }), '°')}
+        </div>` : ''}
+      </div>`;
   }
 
   // ── Erosion (blank canvas) ──
@@ -230,8 +277,6 @@ export class InspectorPanel extends LitElement {
           <span class="class-tag tag-live">Live</span>
         </div>
         ${this._sceneOpen ? html`<div class="section-body">
-          ${this._slider('Sun Az', this._sunAz, 0, 360, 1, v => this._fire('set-sun', { azimuth: v, elevation: this._sunEl }), '°')}
-          ${this._slider('Sun El', this._sunEl, 5, 85, 1, v => this._fire('set-sun', { azimuth: this._sunAz, elevation: v }), '°')}
           ${this._slider('Exposure', this._exposure, 0.2, 3.0, 0.05, v => this._fire('set-exposure', v))}
           ${this._slider('Clouds', this._cloudCoverage, 0, 1, 0.05, v => this._fire('set-clouds', v))}
           ${this._slider('Water', this._waterLevel, 0, 30, 0.5, v => this._fire('set-water', v))}
