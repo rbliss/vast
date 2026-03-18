@@ -47,19 +47,6 @@ export class ToolbarControls extends LitElement {
 
   render() {
     return html`
-      <button @click=${() => this._emit('apply-erosion')} style="background:rgba(140,100,60,0.8);color:#fff;">Erode</button>
-      <button @click=${() => this._emit('take-snapshot')}>Snapshot</button>
-
-      <div class="separator"></div>
-
-      <button @click=${() => this._emit('blank-canvas')}>Blank Canvas</button>
-      <button @click=${() => this._emit('test-environment')}>Test Environment</button>
-      <button @click=${() => this._emit('reset-canvas')}>Reset</button>
-
-      <div class="separator"></div>
-
-      <button @click=${() => this._emit('save-project')}>Save</button>
-      <button @click=${() => this._emit('open-project')}>Open</button>
       ${this.saveStatus ? html`<span style="color:#888; font-size:10px;">${this.saveStatus}</span>` : ''}
     `;
   }

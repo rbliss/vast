@@ -180,16 +180,54 @@ export class InspectorPanel extends LitElement {
     }
   `;
 
+  @state() private _actionsOpen = true;
+
   render() {
     return html`
       ${this._renderBrush()}
       ${this._renderErosion()}
+      ${this._renderActions()}
       ${this._renderDisplay()}
       ${this._renderScene()}
       ${this._renderTerrain()}
       ${this._renderMaterials()}
       ${this._renderScatter()}
     `;
+  }
+
+  // ── Actions (erode, snapshot, environment, save/open) ──
+  private _renderActions() {
+    return html`
+      <div class="section">
+        <div class="section-header" @click=${() => this._actionsOpen = !this._actionsOpen}>
+          <span class="arrow">${this._actionsOpen ? '▼' : '▶'}</span>
+          Actions
+        </div>
+        ${this._actionsOpen ? html`<div class="section-body" style="display:flex; flex-direction:column; gap:5px;">
+          <button class="rebake-btn" style="background:rgba(140,100,60,0.85);"
+            @click=${() => this._fire('apply-erosion', { iterations: this._canvasErosionIter, erosionStrength: this._canvasErosionK })}>
+            Erode Terrain
+          </button>
+          <div style="display:flex; gap:4px;">
+            <button style="flex:1; padding:5px; font:10px/1 monospace; background:rgba(60,60,65,0.8); color:#bbb; border:0; border-radius:4px; cursor:pointer;"
+              @click=${() => this._fire('take-snapshot', null)}>Snapshot</button>
+            <button style="flex:1; padding:5px; font:10px/1 monospace; background:rgba(60,60,65,0.8); color:#bbb; border:0; border-radius:4px; cursor:pointer;"
+              @click=${() => this._fire('reset-canvas', null)}>Reset</button>
+          </div>
+          <div style="display:flex; gap:4px;">
+            <button style="flex:1; padding:5px; font:10px/1 monospace; background:rgba(60,60,65,0.8); color:#bbb; border:0; border-radius:4px; cursor:pointer;"
+              @click=${() => this._fire('blank-canvas', null)}>Blank Canvas</button>
+            <button style="flex:1; padding:5px; font:10px/1 monospace; background:rgba(60,60,65,0.8); color:#bbb; border:0; border-radius:4px; cursor:pointer;"
+              @click=${() => this._fire('test-environment', null)}>Test Env</button>
+          </div>
+          <div style="display:flex; gap:4px;">
+            <button style="flex:1; padding:5px; font:10px/1 monospace; background:rgba(60,60,65,0.8); color:#bbb; border:0; border-radius:4px; cursor:pointer;"
+              @click=${() => this._fire('save-project', null)}>Save</button>
+            <button style="flex:1; padding:5px; font:10px/1 monospace; background:rgba(60,60,65,0.8); color:#bbb; border:0; border-radius:4px; cursor:pointer;"
+              @click=${() => this._fire('open-project', null)}>Open</button>
+          </div>
+        </div>` : ''}
+      </div>`;
   }
 
   // ── Display (clay, overlay, present, sun) ──
