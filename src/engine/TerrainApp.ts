@@ -400,6 +400,11 @@ export class TerrainApp {
     // Rebuild all slots at uniform LOD for seamless sculpting
     this._rebuildSlotsUniformLOD();
 
+    // Add subtle fog for blank canvas — fades non-editable areas into haze
+    (this.scene as any).fog = new THREE.FogExp2(0xc8c8d0, 0.0008);
+    // Match background to fog color for seamless horizon
+    (this.scene as any).background = new THREE.Color(0xc8c8d0);
+
     // Add large ground plane for horizon continuity
     this._addGroundPlane();
     // Force rebuild all chunks
@@ -457,11 +462,12 @@ export class TerrainApp {
     const size = 6000; // extends ±3000 from center
     const geo = new THREE.PlaneGeometry(size, size, 8, 8);
     geo.rotateX(-Math.PI / 2);
-    // Non-editable area: slightly cooler/darker gray to distinguish from editable clay
+    // Non-editable area: bluish-gray haze color, suggests distance/atmosphere
     const mat = new THREE.MeshStandardMaterial({
-      color: 0xb0aca6,
-      roughness: 0.9,
+      color: 0xa8adb8,
+      roughness: 0.95,
       metalness: 0,
+      fog: true,
     });
     this._groundPlane = new THREE.Mesh(geo, mat);
     this._groundPlane.position.y = -0.1;
