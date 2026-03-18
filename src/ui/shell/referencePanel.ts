@@ -13,6 +13,8 @@ interface RefImage {
   id: string;
   name: string;
   url: string;
+  /** Server-side path after upload (for discussion/sharing) */
+  serverPath: string;
   width: number;
   height: number;
 }
@@ -231,16 +233,44 @@ export class ReferencePanel extends LitElement {
       const url = URL.createObjectURL(file);
       const id = `ref_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
-      // Read dimensions
+      // Read dimensions and upload to backend
       const img = new Image();
-      img.onload = () => {
-        this._images = [...this._images, {
-          id,
-          name: file.name,
-          url,
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-        }];
+      img.onload = async () => {
+        // Upload to backend for discussion
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const dataUrl = reader.result as string;
+          let serverPath = '';
+          try {
+            const resp = await fetch('/api/snapshot', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                image: dataUrl,
+                label: `ref_${file.name}`,
+                format: file.name.split('.').pop() || 'png',
+                metadata: { type: 'reference', originalName: file.name },
+              }),
+            });
+            if (resp.ok) {
+              const result = await resp.json();
+              serverPath = result.path || '';
+              console.log(`[reference] uploaded: ${file.name} → ${serverPath}`);
+            }
+          } catch (e) {
+            console.warn('[reference] upload failed:', e);
+          }
+
+          this._images = [...this._images, {
+            id,
+            name: file.name,
+            url,
+            serverPath,
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+          }];
+        };
+        reader.readAsDataURL(file);
       };
       img.src = url;
     }
