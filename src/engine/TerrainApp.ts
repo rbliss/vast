@@ -503,11 +503,12 @@ export class TerrainApp {
 
     const t0 = performance.now();
 
-    // Build erosion params from defaults + overrides
+    // Build erosion params — higher diffusion for smoother channels on sculpted terrain
     const spParams = {
       ...DEFAULT_STREAM_POWER,
       iterations: opts.iterations ?? 15,
       erosionK: opts.erosionStrength ?? 0.006,
+      diffusionRate: 0.02, // higher than default (0.005) for smoother erosion on sculpt grids
     };
 
     // Resistance field
@@ -536,6 +537,24 @@ export class TerrainApp {
       applyHillslopeTransport(grid, n, n, cs, undefined, hillResistance);
       console.log(`[erosion] hillslope transport`);
     }
+
+    // Post-erosion smoothing: removes pixelated stair-stepping
+    // while preserving channel structure
+    const smoothPasses = 3;
+    for (let pass = 0; pass < smoothPasses; pass++) {
+      const tmp = new Float32Array(grid.length);
+      tmp.set(grid);
+      for (let z = 1; z < n - 1; z++) {
+        for (let x = 1; x < n - 1; x++) {
+          const idx = z * n + x;
+          // 5-point average weighted toward center (preserves structure)
+          const neighbors = grid[idx - 1] + grid[idx + 1] + grid[idx - n] + grid[idx + n];
+          tmp[idx] = grid[idx] * 0.5 + neighbors * 0.125;
+        }
+      }
+      grid.set(tmp);
+    }
+    console.log(`[erosion] smoothed (${smoothPasses} passes)`);
 
     const elapsed = performance.now() - t0;
     console.log(`[erosion] applied in ${elapsed.toFixed(0)}ms`);
