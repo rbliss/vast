@@ -182,6 +182,38 @@ export function stitchEdge(pos: THREE.BufferAttribute, edgeVerts: number[], rati
   }
 }
 
+/** Fix border vertex normals using terrain source for cross-chunk continuity */
+function fixBorderNormals(slot: ChunkSlot, terrain: TerrainSource, originX: number, originZ: number): void {
+  const { position: pos, normal: norm } = slot.attrs;
+  const gridW = slot.gridW;
+  const eps = CHUNK_SIZE / (gridW - 1); // cell spacing
+
+  // Fix normals for edge vertices using terrain-source finite differences
+  for (let i = 0; i < slot.gridVertCount; i++) {
+    const gx = i % gridW;
+    const gz = Math.floor(i / gridW);
+
+    // Only fix border vertices (edges of the chunk grid)
+    if (gx > 0 && gx < gridW - 1 && gz > 0 && gz < gridW - 1) continue;
+
+    const wx = pos.getX(i) + originX;
+    const wz = pos.getZ(i) + originZ;
+
+    // Compute normal from terrain source (samples across chunk boundary)
+    const hL = terrain.sampleHeight(wx - eps, wz);
+    const hR = terrain.sampleHeight(wx + eps, wz);
+    const hU = terrain.sampleHeight(wx, wz - eps);
+    const hD = terrain.sampleHeight(wx, wz + eps);
+
+    const dhdx = (hR - hL) / (2 * eps);
+    const dhdz = (hD - hU) / (2 * eps);
+    const len = Math.sqrt(dhdx * dhdx + 1 + dhdz * dhdz);
+
+    norm.setXYZ(i, -dhdx / len, 1 / len, -dhdz / len);
+  }
+  norm.needsUpdate = true;
+}
+
 /** Get LOD for a ring position. d=0 near, d=1 mid, d=2 far, d=3 ultra-far, d>=4 horizon. */
 export function lodForRingPos(dx: number, dz: number): LodLevel {
   const d = Math.max(Math.abs(dx), Math.abs(dz));
@@ -255,6 +287,9 @@ export function rebuildChunkSlot(slot: ChunkSlot, centerCX: number, centerCZ: nu
 
   // Compute normals for grid only — skirt faces excluded
   computeGridNormals(slot);
+
+  // Fix border normals using terrain source (cross-chunk continuity)
+  fixBorderNormals(slot, terrain, originX, originZ);
 
   slot.mesh.position.set(originX, 0, originZ);
   slot.geo.computeBoundingSphere();

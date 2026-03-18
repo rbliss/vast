@@ -396,13 +396,10 @@ export class TerrainApp {
   initEditableMode(gridSize: number = 256, extent: number = 200, existing?: EditableHeightfield): void {
     this._editableHF = existing ?? new EditableHeightfield(gridSize, extent);
     this.terrain = this._editableHF;
-    // Make all slots visible — no dynamic culling in sculpt mode
-    for (const slot of this.slots) {
-      slot.mesh.visible = true;
-      slot.foliage.grass.visible = false;
-      slot.foliage.rock.visible = false;
-      slot.foliage.shrub.visible = false;
-    }
+
+    // Rebuild all slots at uniform LOD for seamless sculpting
+    this._rebuildSlotsUniformLOD();
+
     // Add large ground plane for horizon continuity
     this._addGroundPlane();
     // Force rebuild all chunks
@@ -411,20 +408,47 @@ export class TerrainApp {
     this.updateChunks();
   }
 
-  /** Add a large low-poly ground plane extending far beyond the editable area */
+  /** Rebuild all slots at uniform LOD (eliminates LOD seams for sculpting) */
+  private _rebuildSlotsUniformLOD(): void {
+    // Remove existing slots from scene
+    for (const slot of this.slots) {
+      this.scene.remove(slot.mesh);
+      this.scene.remove(slot.foliage.grass);
+      this.scene.remove(slot.foliage.rock);
+      this.scene.remove(slot.foliage.shrub);
+    }
+    this.slots.length = 0;
+
+    // Use LOD_MID (64 segments) for all slots — uniform quality, no seams
+    const uniformLod = { segments: 64, displacement: false };
+    for (let dz = -HORIZON_GRID_RADIUS; dz <= HORIZON_GRID_RADIUS; dz++) {
+      for (let dx = -HORIZON_GRID_RADIUS; dx <= HORIZON_GRID_RADIUS; dx++) {
+        const foliagePayload = this.foliage.createInstances();
+        const slot = createChunkSlot(uniformLod, dx, dz, this.scene, this.matDisp, this.matNoDisp, foliagePayload);
+        slot.mesh.visible = true;
+        slot.foliage.grass.visible = false;
+        slot.foliage.rock.visible = false;
+        slot.foliage.shrub.visible = false;
+        this.slots.push(slot);
+      }
+    }
+    console.log(`[terrain] rebuilt ${this.slots.length} slots at uniform LOD (${uniformLod.segments} segments)`);
+  }
+
+  /** Add a large ground plane extending far beyond the editable area */
   private _addGroundPlane(): void {
     if (this._groundPlane) return;
-    const size = 4000; // extends 2000 units in each direction
-    const geo = new THREE.PlaneGeometry(size, size, 1, 1);
+    const size = 4000;
+    // More subdivisions to eliminate visible diagonal, but still cheap
+    const geo = new THREE.PlaneGeometry(size, size, 8, 8);
     geo.rotateX(-Math.PI / 2);
-    // Use same clay material color
     const mat = new THREE.MeshStandardMaterial({
       color: 0xc8c0b8,
       roughness: 0.85,
       metalness: 0,
     });
     this._groundPlane = new THREE.Mesh(geo, mat);
-    this._groundPlane.position.y = -0.05; // slightly below terrain to avoid z-fighting
+    this._groundPlane.position.y = -0.1;
     this._groundPlane.receiveShadow = true;
     (this.scene as any).add(this._groundPlane);
   }
