@@ -429,15 +429,13 @@ if (!worldDoc.scene.ibl) app.setIblEnabled(false);
 if (worldDoc.scene.presentation) {
   app.setPresentationMode(true).then(syncToolbar);
 }
-// Clay mode: always on for blank canvas, optional for test env
-if (!isTestEnv || !params.has('textured')) {
-  app.setClayMode(true);
-  viewportStore.setClayMode(true);
-}
-
 // ── Blank canvas: init editable heightfield + sculpt interaction ──
 if (!isTestEnv && terrainSource instanceof (await import('./engine/terrain/editableHeightfield')).EditableHeightfield) {
   app.initEditableMode(1024, 800, terrainSource as any);
+
+  // Clay mode AFTER initEditableMode (slots are rebuilt, need clay material applied to new slots)
+  app.setClayMode(true);
+  viewportStore.setClayMode(true);
 
   // Sculpt: click to raise terrain
   let brushRadius = 20;
@@ -566,6 +564,12 @@ if (!isTestEnv && terrainSource instanceof (await import('./engine/terrain/edita
       app.redoSculpt();
     }
   });
+} else {
+  // Test env: clay mode by default unless ?textured
+  if (!params.has('textured')) {
+    app.setClayMode(true);
+    viewportStore.setClayMode(true);
+  }
 }
 viewportStore.setSunDirection(worldDoc.scene.sun.azimuth, worldDoc.scene.sun.elevation);
 viewportStore.setExposure(worldDoc.scene.exposure);
