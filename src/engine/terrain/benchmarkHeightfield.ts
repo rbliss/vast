@@ -167,15 +167,17 @@ export function createReferenceBenchmarkHeightfield(): EditableHeightfield {
   const plateauHeight = 60;      // base tableland elevation
   const escarpmentSharpness = 3.0; // very steep cliff
 
-  // ── Shoulder masses — subtle elevation along plateau EDGES (not separate peaks) ──
-  // These raise the rim, creating escarpment shoulders like the reference
+  // ── Shoulder masses — steeper elevation along plateau EDGES ──
+  // H2.4c: steeper shoulders feed more organized drainage into reentrant hollows
   const shoulders = [
-    // NE shoulder ridge — highest point along the rim
-    { cx: 200, cz: -180, angle: 0.8, length: 180, width: 100, height: 20 },
+    // NE shoulder ridge — highest, steepest
+    { cx: 200, cz: -180, angle: 0.8, length: 200, width: 80, height: 25 },
     // NW shoulder
-    { cx: -180, cz: -120, angle: 2.8, length: 160, width: 90, height: 15 },
+    { cx: -180, cz: -120, angle: 2.8, length: 180, width: 70, height: 20 },
     // SE shoulder
-    { cx: 150, cz: 160, angle: 1.5, length: 140, width: 80, height: 12 },
+    { cx: 150, cz: 160, angle: 1.5, length: 160, width: 70, height: 16 },
+    // S shoulder (new — more organized rim relief)
+    { cx: -40, cz: 220, angle: 2.0, length: 130, width: 65, height: 14 },
   ];
 
   // ── Gentle summit domes — very broad, low-relief features ON the tableland ──
@@ -187,10 +189,16 @@ export function createReferenceBenchmarkHeightfield(): EditableHeightfield {
   ];
 
   // ── Reentrant hollows — where escarpment edge is concave (drainage focus) ──
+  // H2.4c: more hollows for denser rim-focused tributary initiation
   const hollows = [
-    { cx: 0, cz: -220, angle: 1.57, length: 120, width: 60, depth: 10 },   // N reentrant
-    { cx: -200, cz: 40, angle: 0.3, length: 100, width: 50, depth: 8 },    // W reentrant
-    { cx: 100, cz: 200, angle: 4.5, length: 100, width: 45, depth: 7 },    // SE reentrant
+    { cx: 0, cz: -220, angle: 1.57, length: 120, width: 60, depth: 12 },   // N reentrant (deeper)
+    { cx: -200, cz: 40, angle: 0.3, length: 100, width: 50, depth: 10 },   // W reentrant (deeper)
+    { cx: 100, cz: 200, angle: 4.5, length: 100, width: 45, depth: 9 },    // SE reentrant (deeper)
+    { cx: -120, cz: -160, angle: 0.9, length: 90, width: 40, depth: 8 },   // NW notch
+    { cx: 180, cz: -80, angle: 5.5, length: 80, width: 35, depth: 7 },     // E notch
+    { cx: -60, cz: 200, angle: 3.5, length: 85, width: 40, depth: 7 },     // S notch
+    { cx: 220, cz: 120, angle: 5.0, length: 70, width: 30, depth: 6 },     // SE2 notch
+    { cx: -220, cz: -100, angle: 1.2, length: 75, width: 35, depth: 6 },   // W2 notch
   ];
 
   // ── Fill grid ──
@@ -242,18 +250,33 @@ export function createReferenceBenchmarkHeightfield(): EditableHeightfield {
       h += undulation(wx, wz) * plateauMask * 0.4; // reduced from 1.0
       h += terrainTexture(wx, wz) * plateauMask * 0.5;
 
-      // 6. Apron / piedmont — gentle receiving slope below escarpment
-      if (warpedDist > 0.85) {
-        const apronT = Math.min(1, (warpedDist - 0.85) / 0.6);
-        const apronH = (1 - apronT) * 12;
-        h += apronH * (1 - plateauMask);
+      // 6. Piedmont / surrounding terrain (H2.4d: larger passive surround)
+      // Beyond the escarpment, create rolling piedmont that gives visual context.
+      // Height decreases with distance from the tableland but stays above minimum.
+      const outsidePlateau = 1.0 - plateauMask;
+      if (outsidePlateau > 0.01) {
+        // Piedmont toe slope — steeper near escarpment base, flattening outward
+        const distFromEdge = Math.max(0, warpedDist - 0.85);
+        const toeSlope = Math.max(0, 15 - distFromEdge * 18); // steep near base
+
+        // Rolling piedmont — gentle undulation across the surrounding terrain
+        const piedmontRoll = 4.0
+          + Math.sin(wx * 0.008 + 0.5) * Math.cos(wz * 0.007 + 1.2) * 3.0
+          + Math.sin(wx * 0.012 + wz * 0.01) * 2.0
+          + Math.sin((wx - wz) * 0.005 + 2.1) * 1.5;
+
+        // Radial distance fade — terrain drops gently toward domain edges
+        const distFromCenter = Math.sqrt(wx * wx + wz * wz);
+        const edgeFade = Math.max(0, 1.0 - distFromCenter / 750);
+
+        h += (toeSlope + piedmontRoll * edgeFade) * outsidePlateau;
       }
 
       // 7. Large-scale tilt (drainage direction bias — NE slightly higher)
       h += (wx * 0.003 + wz * 0.002) * plateauMask * 0.5;
 
       // Minimum base height prevents chunk edge artifacts
-      grid[gz * gridSize + gx] = Math.max(1.0, h);
+      grid[gz * gridSize + gx] = Math.max(1.5, h);
     }
   }
 

@@ -516,38 +516,58 @@ export function streamPowerErosion(
     // Step 2b: Planform curvature (convergence detection for tributary initiation)
     const curvature = computePlanformCurvature(grid, w, h, cellSize);
 
-    // Step 2c: Update proto-channel susceptibility field (H2.4a)
+    // Step 2c: Update proto-channel susceptibility field (H2.4a/b/c)
     // Combines multiscale convergence + headward support into a persistent field.
-    // This field modulates channel-initiation threshold — no direct carving.
+    // H2.4c: strongly biased toward escarpment rims / reentrant hollows.
     {
       const baseThreshold = 20.0;
-      const decayRate = 0.97;        // H2.4b: higher persistence — field accumulates over more iterations
-      const convergenceGain = 0.08;  // H2.4b: slightly stronger convergence signal
-      const reliefGain = 0.05;       // H2.4b: slightly stronger relief signal
-      const headwardGain = 0.25;     // H2.4b: much stronger headward support — main tributary driver
+      const decayRate = 0.97;
+      const convergenceGain = 0.08;
+      const reliefGain = 0.05;
+      const headwardGain = 0.30;     // H2.4c: stronger headward — main driver
+      const rimGain = 0.20;          // H2.4c: new dedicated rim proximity signal
 
       // Decay existing field
       for (let i = 0; i < n; i++) {
         protoChannel[i] *= decayRate;
       }
 
-      for (let z = 3; z < h - 3; z++) {
-        for (let x = 3; x < w - 3; x++) {
+      for (let z = 5; z < h - 5; z++) {
+        for (let x = 5; x < w - 5; x++) {
           const idx = z * w + x;
           const A_here = area[idx];
           const S_here = slopes[idx];
           const sai = A_here * S_here;
 
-          // Skip already-channelized cells (they don't need susceptibility)
+          // Skip already-channelized cells
           if (sai > baseThreshold) continue;
-          // Skip very flat interior
+          // Skip very flat deep interior (mesa protection)
           if (S_here < 0.02) continue;
 
-          // ── Signal 1: Local convergence (planform curvature) ──
-          const localConv = Math.max(0, curvature[idx]);
-          protoChannel[idx] += localConv * convergenceGain;
+          // ── Rim proximity detection (H2.4c) ──
+          // Detect if this cell is near the escarpment edge by checking
+          // max height drop within a wider neighborhood (radius 8 cells).
+          // Cells near rims: high local height but steep drop nearby.
+          let maxDrop = 0;
+          const hHere = grid[idx];
+          for (let dz = -8; dz <= 8; dz += 4) {
+            for (let dx = -8; dx <= 8; dx += 4) {
+              if (dx === 0 && dz === 0) continue;
+              const nz2 = z + dz, nx2 = x + dx;
+              if (nz2 < 0 || nz2 >= h || nx2 < 0 || nx2 >= w) continue;
+              const drop = hHere - grid[nz2 * w + nx2];
+              if (drop > maxDrop) maxDrop = drop;
+            }
+          }
+          // rimProximity: 0 = flat interior, high = near escarpment edge
+          const rimProximity = Math.min(1.0, maxDrop / 20.0); // normalize: 20 units drop = full rim
 
-          // ── Signal 2: Neighborhood relief (break-in-slope at radius 5) ──
+          // ── Signal 1: Local convergence × rim bias ──
+          const localConv = Math.max(0, curvature[idx]);
+          const convSignal = localConv * convergenceGain * (1.0 + rimProximity * 3.0);
+          protoChannel[idx] += convSignal;
+
+          // ── Signal 2: Neighborhood relief × rim bias ──
           let neighborSum = 0, neighborCount = 0;
           for (let dz = -5; dz <= 5; dz += 2) {
             for (let dx = -5; dx <= 5; dx += 2) {
@@ -559,15 +579,13 @@ export function streamPowerErosion(
           if (neighborCount > 0) {
             const neighborMean = neighborSum / neighborCount;
             const belowMean = Math.max(0, neighborMean - grid[idx]);
-            protoChannel[idx] += belowMean * reliefGain / Math.max(1, cellSize);
+            protoChannel[idx] += belowMean * reliefGain * (1.0 + rimProximity * 2.0) / Math.max(1, cellSize);
           }
 
-          // ── Signal 3: Rim / escarpment context ──
-          // Stronger near steep neighbors (escarpment heads)
-          const nearSteep = slopes[idx + 1] > 0.4 || slopes[idx - 1] > 0.4 ||
-                            slopes[idx + w] > 0.4 || slopes[idx - w] > 0.4;
-          if (nearSteep && A_here > 10 && A_here < 300) {
-            protoChannel[idx] += S_here * convergenceGain * 2.0;
+          // ── Signal 3: Rim proximity directly ──
+          // Cells near the escarpment rim with any slope get direct susceptibility
+          if (rimProximity > 0.3 && S_here > 0.05) {
+            protoChannel[idx] += rimGain * rimProximity * S_here;
           }
 
           // ── Signal 4: Headward support from existing channel heads ──
