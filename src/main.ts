@@ -349,17 +349,20 @@ shell.addEventListener('apply-erosion', ((e: CustomEvent) => {
   const opts = e?.detail ?? {};
   const iterations = opts.iterations ?? 15;
   shell.statusText = `Eroding terrain: 0/${iterations} iterations...`;
-  // Run async to let UI update before blocking computation
-  setTimeout(() => {
-    app.applyErosion({
-      ...opts,
-      onProgress: (iter: number) => {
-        shell.statusText = `Eroding terrain: ${iter}/${iterations} iterations...`;
-      },
-    });
-    shell.statusText = `Erosion complete — ${iterations} iterations (Cmd+Z to undo)`;
-    setTimeout(() => { shell.statusText = runtimeStore.statusLine; }, 4000);
-  }, 50);
+  app.applyErosion({
+    ...opts,
+    onProgress: (iter: number) => {
+      shell.statusText = `Eroding terrain: ${iter}/${iterations} iterations...`;
+    },
+    onComplete: () => {
+      shell.statusText = `Erosion complete — ${iterations} iterations (Cmd+Z to undo)`;
+      setTimeout(() => { shell.statusText = runtimeStore.statusLine; }, 4000);
+    },
+    onError: (err: string) => {
+      shell.statusText = `Erosion failed: ${err}`;
+      setTimeout(() => { shell.statusText = runtimeStore.statusLine; }, 4000);
+    },
+  });
 }) as EventListener);
 
 // ── Save / Open / Autosave ──

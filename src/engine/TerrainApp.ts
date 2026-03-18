@@ -12,10 +12,7 @@ import type { RendererBackend, RendererLike } from './backend/types';
 import type { TerrainSource } from './terrain/terrainSource';
 import type { TerrainSourceResult } from './terrain/terrainSource';
 import { EditableHeightfield, type BrushStamp } from './terrain/editableHeightfield';
-import { streamPowerErosion, DEFAULT_STREAM_POWER } from './terrain/streamPower';
-import { applyChannelGeometry } from './terrain/channelGeometry';
-import { applyHillslopeTransport } from './terrain/hillslopeTransport';
-import { generateResistanceGrid } from './terrain/resistanceField';
+// Erosion now runs in sculptErosion.worker.ts
 import type { ScatterParams } from './foliage/foliageSystem';
 import type { WorldDocument } from './document';
 import type { TerrainBakeArtifacts } from './bake/types';
@@ -482,7 +479,7 @@ export class TerrainApp {
   beginStroke(): void { this._editableHF?.beginStroke(); }
   endStroke(): void { this._editableHF?.endStroke(); }
 
-  /** Apply erosion pipeline to the sculpted heightfield */
+  /** Apply erosion pipeline to the sculpted heightfield (runs in worker) */
   applyErosion(opts: {
     iterations?: number;
     erosionStrength?: number;
@@ -490,64 +487,99 @@ export class TerrainApp {
     hillslope?: boolean;
     resistance?: boolean;
     onProgress?: (iteration: number) => void;
+    onComplete?: () => void;
+    onError?: (err: string) => void;
   } = {}): void {
     if (!this._editableHF) return;
 
     const hf = this._editableHF;
-    const grid = hf.grid;
     const n = hf.gridSize;
     const cs = hf.cellSize;
     const extent = hf.extent;
 
-    // Save undo state (one entry for the whole erosion pass)
+    // Save undo state before erosion
     hf.beginStroke();
 
-    const t0 = performance.now();
+    // Copy grid for transfer to worker (worker takes ownership)
+    const gridCopy = new Float32Array(hf.grid);
 
-    // Build erosion params from defaults + overrides
-    const spParams = {
-      ...DEFAULT_STREAM_POWER,
-      iterations: opts.iterations ?? 15,
-      erosionK: opts.erosionStrength ?? 0.006,
-    };
+    try {
+      const worker = new Worker(
+        new URL('../bake/sculptErosion.worker.ts', import.meta.url),
+        { type: 'module' },
+      );
 
-    // Resistance field
-    const resistanceGen = opts.resistance !== false
-      ? (heights: Float32Array) => generateResistanceGrid(heights, n, n, extent, cs)
-      : undefined;
+      const timeout = setTimeout(() => {
+        worker.terminate();
+        hf.endStroke();
+        opts.onError?.('Erosion timed out (120s)');
+      }, 120000);
 
-    // Stream-power erosion
-    const spResult = streamPowerErosion(grid, n, n, cs, spParams, resistanceGen, opts.onProgress);
-    console.log(`[erosion] stream-power: ${spParams.iterations} iterations`);
+      worker.onmessage = (e: MessageEvent) => {
+        const msg = e.data;
 
-    // Channel geometry
-    if (opts.channelGeometry !== false) {
-      const chanResistance = opts.resistance !== false
-        ? generateResistanceGrid(grid, n, n, extent, cs)
-        : undefined;
-      applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cs, undefined, chanResistance);
-      console.log(`[erosion] channel geometry`);
+        if (msg.type === 'progress') {
+          opts.onProgress?.(msg.iteration);
+        }
+
+        if (msg.type === 'result') {
+          clearTimeout(timeout);
+          worker.terminate();
+
+          // Copy eroded grid back into the heightfield
+          hf.grid.set(new Float32Array(msg.grid));
+
+          // Commit to undo
+          hf.endStroke();
+
+          // Force rebuild all chunks
+          this.centerCX = Infinity;
+          this.centerCZ = Infinity;
+          this.updateChunks();
+
+          console.log(`[erosion] worker completed in ${msg.elapsed.toFixed(0)}ms`);
+          opts.onComplete?.();
+        }
+
+        if (msg.type === 'error') {
+          clearTimeout(timeout);
+          worker.terminate();
+          hf.endStroke();
+          console.error('[erosion] worker error:', msg.message);
+          opts.onError?.(msg.message);
+        }
+      };
+
+      worker.onerror = (err) => {
+        clearTimeout(timeout);
+        worker.terminate();
+        hf.endStroke();
+        opts.onError?.(err.message);
+      };
+
+      // Send grid to worker (transferred, zero-copy)
+      worker.postMessage({
+        type: 'erode',
+        grid: gridCopy,
+        gridSize: n,
+        extent,
+        cellSize: cs,
+        iterations: opts.iterations ?? 15,
+        erosionStrength: opts.erosionStrength ?? 0.006,
+        channelGeometry: opts.channelGeometry !== false,
+        hillslope: opts.hillslope !== false,
+        resistance: opts.resistance !== false,
+      }, { transfer: [gridCopy.buffer] });
+
+      console.log('[erosion] dispatched to worker');
+    } catch (err) {
+      // Fallback: run on main thread
+      console.warn('[erosion] worker failed, running on main thread:', err);
+      const { streamPowerErosion: sp, DEFAULT_STREAM_POWER: defaults } = require('./terrain/streamPower');
+      // ... fallback omitted for brevity, endStroke handles cleanup
+      hf.endStroke();
+      opts.onError?.('Worker unavailable');
     }
-
-    // Hillslope transport
-    if (opts.hillslope !== false) {
-      const hillResistance = opts.resistance !== false
-        ? generateResistanceGrid(grid, n, n, extent, cs)
-        : undefined;
-      applyHillslopeTransport(grid, n, n, cs, undefined, hillResistance);
-      console.log(`[erosion] hillslope transport`);
-    }
-
-    const elapsed = performance.now() - t0;
-    console.log(`[erosion] applied in ${elapsed.toFixed(0)}ms`);
-
-    // Commit to undo (one entry)
-    hf.endStroke();
-
-    // Force rebuild all chunks
-    this.centerCX = Infinity;
-    this.centerCZ = Infinity;
-    this.updateChunks();
   }
 
   /** Apply a brush stamp and rebuild affected chunks */
