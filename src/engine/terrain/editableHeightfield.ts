@@ -29,11 +29,11 @@ export class EditableHeightfield implements TerrainSource {
   private readonly _cellSize: number;
   private readonly _undoStack: Float32Array[] = [];
   private readonly _redoStack: Float32Array[] = [];
-  private readonly _maxUndo = 50;
+  private readonly _maxUndo = 20; // reduced for 1024² grid (~4MB per snapshot)
   private _strokeActive = false;
   private _strokeSnapshot: Float32Array | null = null;
 
-  constructor(gridSize: number = 512, extent: number = 400) {
+  constructor(gridSize: number = 1024, extent: number = 800) {
     this._gridSize = gridSize;
     this._extent = extent;
     this._cellSize = (extent * 2) / (gridSize - 1);

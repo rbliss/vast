@@ -406,6 +406,22 @@ export class TerrainApp {
     this.centerCX = Infinity;
     this.centerCZ = Infinity;
     this.updateChunks();
+
+    // Hide chunks fully outside the editable extent (let gray plane show)
+    const hfExtent = this._editableHF.extent;
+    const halfChunk = CHUNK_SIZE / 2;
+    for (const slot of this.slots) {
+      const slotMinX = (this.centerCX + slot.dx) * CHUNK_SIZE - halfChunk;
+      const slotMaxX = slotMinX + CHUNK_SIZE;
+      const slotMinZ = (this.centerCZ + slot.dz) * CHUNK_SIZE - halfChunk;
+      const slotMaxZ = slotMinZ + CHUNK_SIZE;
+
+      // Fully outside editable extent?
+      if (slotMinX > hfExtent || slotMaxX < -hfExtent ||
+          slotMinZ > hfExtent || slotMaxZ < -hfExtent) {
+        slot.mesh.visible = false;
+      }
+    }
   }
 
   /** Rebuild all slots at uniform LOD (eliminates LOD seams for sculpting) */
@@ -435,16 +451,16 @@ export class TerrainApp {
     console.log(`[terrain] rebuilt ${this.slots.length} slots at uniform LOD (${uniformLod.segments} segments)`);
   }
 
-  /** Add a large ground plane extending far beyond the editable area */
+  /** Add a large ground plane extending far beyond the editable area — visually distinct gray */
   private _addGroundPlane(): void {
     if (this._groundPlane) return;
-    const size = 4000;
-    // More subdivisions to eliminate visible diagonal, but still cheap
+    const size = 6000; // extends ±3000 from center
     const geo = new THREE.PlaneGeometry(size, size, 8, 8);
     geo.rotateX(-Math.PI / 2);
+    // Non-editable area: slightly cooler/darker gray to distinguish from editable clay
     const mat = new THREE.MeshStandardMaterial({
-      color: 0xc8c0b8,
-      roughness: 0.85,
+      color: 0xb0aca6,
+      roughness: 0.9,
       metalness: 0,
     });
     this._groundPlane = new THREE.Mesh(geo, mat);
