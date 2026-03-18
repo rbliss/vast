@@ -483,7 +483,8 @@ if (!isTestEnv && terrainSource instanceof (await import('./engine/terrain/edita
   let sculpting = false;
   let lastStampX = 0;
   let lastStampZ = 0;
-  const stampSpacing = () => brushRadius * 0.25;
+  const stampSpacing = () => brushRadius * 0.4;
+  const dragStrengthScale = 0.15; // drag is much gentler than click
 
   function getNDC(e: MouseEvent) {
     const rect = viewportHost.getBoundingClientRect();
@@ -532,7 +533,7 @@ if (!isTestEnv && terrainSource instanceof (await import('./engine/terrain/edita
         const t = i / steps;
         const sx = lastStampX + dx * t;
         const sz = lastStampZ + dz * t;
-        app.applyBrushStamp({ x: sx, z: sz, radius: brushRadius, strength: brushStrength * 0.5 });
+        app.applyBrushStamp({ x: sx, z: sz, radius: brushRadius, strength: brushStrength * dragStrengthScale });
       }
       lastStampX = hit.x;
       lastStampZ = hit.z;
