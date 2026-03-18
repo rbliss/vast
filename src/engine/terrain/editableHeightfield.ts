@@ -30,6 +30,8 @@ export class EditableHeightfield implements TerrainSource {
   private readonly _undoStack: Float32Array[] = [];
   private readonly _redoStack: Float32Array[] = [];
   private readonly _maxUndo = 50;
+  private _strokeActive = false;
+  private _strokeSnapshot: Float32Array | null = null;
 
   constructor(gridSize: number = 512, extent: number = 400) {
     this._gridSize = gridSize;
@@ -68,12 +70,34 @@ export class EditableHeightfield implements TerrainSource {
            h11 * fx * fz;
   }
 
+  /** Begin a drag stroke — snapshot saved once for the whole stroke */
+  beginStroke(): void {
+    if (this._strokeActive) return;
+    this._strokeActive = true;
+    this._strokeSnapshot = new Float32Array(this._grid);
+    this._redoStack.length = 0;
+  }
+
+  /** End a drag stroke — commit the snapshot to undo history */
+  endStroke(): void {
+    if (!this._strokeActive) return;
+    this._strokeActive = false;
+    if (this._strokeSnapshot) {
+      this._undoStack.push(this._strokeSnapshot);
+      if (this._undoStack.length > this._maxUndo) this._undoStack.shift();
+      this._strokeSnapshot = null;
+    }
+  }
+
   /**
    * Apply a brush stamp. Returns the set of affected chunk coordinates.
+   * If called outside a stroke, saves undo state per stamp.
    */
   applyStamp(stamp: BrushStamp): Set<string> {
-    // Save undo state
-    this._pushUndo();
+    // Save undo state only if not in a stroke (strokes save once at begin)
+    if (!this._strokeActive) {
+      this._pushUndo();
+    }
 
     const n = this._gridSize;
     const cs = this._cellSize;

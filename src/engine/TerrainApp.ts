@@ -429,6 +429,9 @@ export class TerrainApp {
     (this.scene as any).add(this._groundPlane);
   }
 
+  beginStroke(): void { this._editableHF?.beginStroke(); }
+  endStroke(): void { this._editableHF?.endStroke(); }
+
   /** Apply a brush stamp and rebuild affected chunks */
   applyBrushStamp(stamp: BrushStamp): void {
     if (!this._editableHF) return;

@@ -479,17 +479,79 @@ if (!isTestEnv && terrainSource instanceof (await import('./engine/terrain/edita
     app.hideBrushPreview();
   });
 
-  // Sculpt: click to raise
-  viewportHost.addEventListener('click', (e: MouseEvent) => {
-    // Convert mouse to NDC
-    const rect = viewportHost.getBoundingClientRect();
-    const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  // Sculpt: click and drag to raise
+  let sculpting = false;
+  let lastStampX = 0;
+  let lastStampZ = 0;
+  const stampSpacing = () => brushRadius * 0.25;
 
-    const hit = app.raycastTerrain(ndcX, ndcY);
-    if (hit) {
-      app.applyBrushStamp({ x: hit.x, z: hit.z, radius: brushRadius, strength: brushStrength });
+  function getNDC(e: MouseEvent) {
+    const rect = viewportHost.getBoundingClientRect();
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      y: -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    };
+  }
+
+  viewportHost.addEventListener('pointerdown', (e: PointerEvent) => {
+    if (e.button !== 0) return; // left button only
+    const ndc = getNDC(e);
+    const hit = app.raycastTerrain(ndc.x, ndc.y);
+    if (!hit) return;
+
+    sculpting = true;
+    viewportHost.setPointerCapture(e.pointerId);
+
+    // Suspend orbit controls during sculpt drag
+    app.controls.enabled = false;
+
+    // Begin stroke (one undo entry for entire drag)
+    app.beginStroke();
+    app.applyBrushStamp({ x: hit.x, z: hit.z, radius: brushRadius, strength: brushStrength });
+    lastStampX = hit.x;
+    lastStampZ = hit.z;
+
+    e.preventDefault();
+  });
+
+  viewportHost.addEventListener('pointermove', (e: PointerEvent) => {
+    if (!sculpting) return;
+    const ndc = getNDC(e);
+    const hit = app.raycastTerrain(ndc.x, ndc.y);
+    if (!hit) return;
+
+    // Interpolate stamps along the drag path to prevent gaps
+    const dx = hit.x - lastStampX;
+    const dz = hit.z - lastStampZ;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const spacing = stampSpacing();
+
+    if (dist >= spacing) {
+      const steps = Math.ceil(dist / spacing);
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const sx = lastStampX + dx * t;
+        const sz = lastStampZ + dz * t;
+        app.applyBrushStamp({ x: sx, z: sz, radius: brushRadius, strength: brushStrength * 0.5 });
+      }
+      lastStampX = hit.x;
+      lastStampZ = hit.z;
     }
+
+    // Update brush preview during drag
+    app.updateBrushPreview(hit.x, hit.z, brushRadius);
+  });
+
+  viewportHost.addEventListener('pointerup', (e: PointerEvent) => {
+    if (!sculpting) return;
+    sculpting = false;
+    viewportHost.releasePointerCapture(e.pointerId);
+
+    // End stroke (commit to undo history)
+    app.endStroke();
+
+    // Re-enable orbit controls
+    app.controls.enabled = true;
   });
 
   // Undo/Redo shortcuts
