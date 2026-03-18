@@ -16,6 +16,7 @@ export interface SculptErosionOpts {
   hillslope: boolean;
   resistance: boolean;
   onProgress?: (iteration: number) => void;
+  onPreview?: (grid: Float32Array, iteration: number) => void;
 }
 
 export interface SculptErosionResult {
@@ -47,6 +48,10 @@ export function runSculptErosion(opts: SculptErosionOpts): Promise<SculptErosion
 
       if (msg.type === 'progress' && opts.onProgress) {
         opts.onProgress(msg.iteration);
+      }
+
+      if (msg.type === 'preview' && opts.onPreview) {
+        opts.onPreview(new Float32Array(msg.grid), msg.iteration);
       }
 
       if (msg.type === 'result') {

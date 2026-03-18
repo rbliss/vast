@@ -511,6 +511,13 @@ export class TerrainApp {
       hillslope: opts.hillslope !== false,
       resistance: opts.resistance !== false,
       onProgress: opts.onProgress,
+      onPreview: (previewGrid, _iter) => {
+        // Apply preview to heightfield and rebuild visible chunks
+        hf.grid.set(previewGrid);
+        this.centerCX = Infinity;
+        this.centerCZ = Infinity;
+        this.updateChunks();
+      },
     }).then((result) => {
       // Copy eroded grid back
       hf.grid.set(result.grid);

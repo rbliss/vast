@@ -46,9 +46,19 @@ self.onmessage = (e: MessageEvent) => {
       ? (heights: Float32Array) => generateResistanceGrid(heights, n, n, extent, cs)
       : undefined;
 
-    // Stream-power erosion with progress
+    // Stream-power erosion with progress + throttled previews
+    const PREVIEW_INTERVAL = 4; // send preview every N iterations
     const spResult = streamPowerErosion(grid, n, n, cs, spParams, resistanceGen, (iter) => {
       self.postMessage({ type: 'progress', iteration: iter, total: iterations });
+
+      // Send throttled preview during stream-power
+      if (iter % PREVIEW_INTERVAL === 0 || iter === iterations) {
+        const previewCopy = new Float32Array(grid);
+        self.postMessage(
+          { type: 'preview', iteration: iter, grid: previewCopy },
+          { transfer: [previewCopy.buffer] },
+        );
+      }
     });
 
     // Channel geometry
