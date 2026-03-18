@@ -36,39 +36,47 @@ export type BakeProgressCallback = (progress: BakeProgress) => void;
  * @param onProgress Optional progress callback
  * @returns Promise resolving to bake artifacts
  */
+export type StageCaptureHandler = (stage: string, grid: Float32Array) => void;
+
 export async function runBake(
   request: TerrainBakeRequest,
   onProgress?: BakeProgressCallback,
+  preSampledGrid?: Float32Array,
+  onStageCapture?: StageCaptureHandler,
 ): Promise<TerrainBakeArtifacts> {
-  // Step 1: Check cache
-  try {
-    const cached = await loadFromCache(request);
-    if (cached.hit && cached.artifacts) {
-      onProgress?.({
-        stage: 'cache-hit',
-        stageIndex: 0,
-        totalStages: 1,
-        elapsedMs: 0,
-      });
-      return cached.artifacts;
+  // Step 1: Check cache (skip for pre-sampled grids — they're deterministic but not macro-keyed)
+  if (!preSampledGrid) {
+    try {
+      const cached = await loadFromCache(request);
+      if (cached.hit && cached.artifacts) {
+        onProgress?.({
+          stage: 'cache-hit',
+          stageIndex: 0,
+          totalStages: 1,
+          elapsedMs: 0,
+        });
+        return cached.artifacts;
+      }
+    } catch (err) {
+      console.warn('[bake] cache check failed:', err);
     }
-  } catch (err) {
-    console.warn('[bake] cache check failed:', err);
   }
 
   // Step 2: Compute (worker preferred)
   let artifacts: TerrainBakeArtifacts;
   try {
-    artifacts = await runBakeInWorker(request, onProgress);
+    artifacts = await runBakeInWorker(request, onProgress, preSampledGrid, onStageCapture);
   } catch (err) {
     console.warn('[bake] worker failed, falling back to main thread:', err);
-    artifacts = runBakeOnMainThread(request);
+    artifacts = runBakeOnMainThread(request, preSampledGrid, onStageCapture);
   }
 
-  // Step 3: Save to cache (fire-and-forget)
-  saveToCache(request, artifacts).catch(err => {
-    console.warn('[bake] cache save failed:', err);
-  });
+  // Step 3: Save to cache (skip for pre-sampled grids)
+  if (!preSampledGrid) {
+    saveToCache(request, artifacts).catch(err => {
+      console.warn('[bake] cache save failed:', err);
+    });
+  }
 
   return artifacts;
 }
@@ -79,6 +87,8 @@ export async function runBake(
 function runBakeInWorker(
   request: TerrainBakeRequest,
   onProgress?: BakeProgressCallback,
+  preSampledGrid?: Float32Array,
+  onStageCapture?: StageCaptureHandler,
 ): Promise<TerrainBakeArtifacts> {
   return new Promise((resolve, reject) => {
     let worker: Worker;
@@ -110,6 +120,10 @@ function runBakeInWorker(
         });
       }
 
+      if (msg.type === 'stage-capture' && onStageCapture) {
+        onStageCapture(msg.stage, new Float32Array(msg.grid));
+      }
+
       if (msg.type === 'result') {
         clearTimeout(timeout);
         worker.terminate();
@@ -129,8 +143,15 @@ function runBakeInWorker(
       reject(new Error(`Worker error: ${err.message}`));
     };
 
-    // Send bake request
-    worker.postMessage({ type: 'bake', request });
+    // Send bake request (with optional pre-sampled grid transfer)
+    const workerMsg: any = { type: 'bake', request, captureStages: !!onStageCapture };
+    const transfer: Transferable[] = [];
+    if (preSampledGrid) {
+      const gridCopy = new Float32Array(preSampledGrid);
+      workerMsg.preSampledGrid = gridCopy;
+      transfer.push(gridCopy.buffer);
+    }
+    worker.postMessage(workerMsg, { transfer });
     console.log('[bake] dispatched to worker');
   });
 }
@@ -138,7 +159,7 @@ function runBakeInWorker(
 /**
  * Synchronous main-thread fallback.
  */
-function runBakeOnMainThread(request: TerrainBakeRequest): TerrainBakeArtifacts {
+function runBakeOnMainThread(request: TerrainBakeRequest, preSampledGrid?: Float32Array, onStageCapture?: StageCaptureHandler): TerrainBakeArtifacts {
   console.log('[bake] running on main thread (fallback)');
-  return executeBake(request);
+  return executeBake(request, preSampledGrid, onStageCapture);
 }

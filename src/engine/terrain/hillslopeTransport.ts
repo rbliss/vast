@@ -31,7 +31,7 @@ export const DEFAULT_HILLSLOPE_PARAMS: HillslopeParams = {
   criticalSlope: 1.8,
   diffusionRate: 0.005,
   transferRate: 0.3,
-  debrisReach: 3,
+  debrisReach: 3,           // cell-count — acceptable since it controls local debris steps
 };
 
 const D8_DX = [-1, 0, 1, -1, 1, -1, 0, 1];

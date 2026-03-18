@@ -53,11 +53,16 @@ function setStartupStatus(msg: string) {
   if (startupEl) startupEl.textContent = msg;
 }
 
-// ── Create document: blank canvas by default, test env via ?testenv or ?preset ──
+// ── Create document: blank canvas by default, test env via ?testenv or ?preset, benchmark via ?benchmark ──
 const isTestEnv = params.has('testenv') || params.has('preset');
+const isBenchmark = params.has('benchmark');
 let worldDoc: WorldDocument;
 
-if (isTestEnv) {
+if (isBenchmark) {
+  setStartupStatus('Loading reference benchmark...');
+  worldDoc = createBlankCanvasDocument();
+  worldDoc.meta.name = 'Reference Benchmark';
+} else if (isTestEnv) {
   setStartupStatus('Loading test environment...');
   worldDoc = createTestEnvironmentDocument();
 } else {
@@ -113,6 +118,43 @@ if (isTestEnv) {
   terrainSource = result.source;
   bakeArtifacts = result.bakeArtifacts;
   terrainDomain = result.domain;
+} else if (isBenchmark) {
+  // Reference benchmark: deterministic heightfield → full production bake pipeline
+  setStartupStatus('Generating benchmark terrain...');
+  const { createReferenceBenchmarkHeightfield } = await import('./engine/terrain/benchmarkHeightfield');
+  const benchHF = createReferenceBenchmarkHeightfield();
+
+  // Use benchmark-specific erosion config (H2.1c: no longer borrows from chain preset)
+  const { BENCHMARK_EROSION } = await import('./engine/terrain/benchmarkHeightfield');
+  const { MACRO_PRESETS } = await import('./engine/terrain/macroTerrain');
+  const bakeRequest = {
+    macro: MACRO_PRESETS['chain'], // macro config only used as fallback base — grid is pre-sampled
+    erosion: BENCHMARK_EROSION,
+  };
+
+  // Run production bake pipeline with benchmark grid as starting point
+  const { runBake } = await import('./engine/bake/terrainBakeManager');
+  const { BakedTerrainSource } = await import('./engine/bake/bakedTerrainSource');
+  const { MacroTerrainSource } = await import('./engine/terrain/macroTerrain');
+  const { domainFromBakeMetadata } = await import('./engine/bake/terrainDomain');
+
+  const artifacts = await runBake(bakeRequest, (progress) => {
+    const elapsed = `${Math.round(progress.elapsedMs / 100) / 10}s`;
+    const stageLabels: Record<string, string> = {
+      'sampling': 'Loading benchmark',
+      'stream-power': 'Eroding channels',
+      'fan-deposition': 'Building fans',
+      'thermal': 'Relaxing slopes',
+      'packaging': 'Packaging results',
+    };
+    const label = stageLabels[progress.stage] || progress.stage;
+    setStartupStatus(`Benchmark bake: ${label}\n${progress.stageIndex + 1}/${progress.totalStages} · ${elapsed}`);
+  }, benchHF.grid);
+
+  // Use the benchmark heightfield as the "base" for BakedTerrainSource fallback
+  terrainSource = new BakedTerrainSource(benchHF, artifacts);
+  bakeArtifacts = artifacts;
+  terrainDomain = domainFromBakeMetadata(artifacts.metadata, 256, false);
 } else {
   // Blank canvas: use editable heightfield (no bake)
   const { EditableHeightfield } = await import('./engine/terrain/editableHeightfield');
@@ -341,6 +383,10 @@ shell.addEventListener('test-environment', () => {
   window.location.href = '/?testenv';
 });
 
+shell.addEventListener('reference-benchmark', () => {
+  window.location.href = '/?benchmark';
+});
+
 shell.addEventListener('reset-canvas', () => {
   app.resetCanvas();
 });
@@ -352,6 +398,7 @@ shell.addEventListener('apply-erosion', ((e: CustomEvent) => {
   shell.statusText = `Eroding terrain: 0/${iterations} iterations...`;
   app.applyErosion({
     ...opts,
+    fullPipeline: isBenchmark,
     onProgress: (iter: number) => {
       shell.statusText = `Eroding terrain: ${iter}/${iterations} iterations...`;
     },
@@ -452,7 +499,8 @@ if (worldDoc.scene.presentation) {
   app.setPresentationMode(true).then(syncToolbar);
 }
 // ── Blank canvas: init editable heightfield + sculpt interaction ──
-if (!isTestEnv && terrainSource instanceof (await import('./engine/terrain/editableHeightfield')).EditableHeightfield) {
+// (Benchmark now uses production bake path — no editable mode)
+if (!isBenchmark && !isTestEnv && terrainSource instanceof (await import('./engine/terrain/editableHeightfield')).EditableHeightfield) {
   app.initEditableMode(1024, 800, terrainSource as any);
 
   // Clay mode AFTER initEditableMode (slots are rebuilt, need clay material applied to new slots)
@@ -686,6 +734,263 @@ import { REVIEW_PRESETS, computeReviewCamera } from './engine/reviewHarness';
   if (!wasClay) app.setClayMode(false);
   console.log(`[review] done`);
 };
+
+// ── Benchmark camera setup + review capture ──
+if (isBenchmark) {
+  const { BENCHMARK_CAMERAS } = await import('./engine/terrain/benchmarkHeightfield');
+
+  // Position camera at the wide overview
+  const defaultCam = BENCHMARK_CAMERAS[0];
+  const camH = terrainSource.sampleHeight(defaultCam.camX, defaultCam.camZ);
+  const tgtH = terrainSource.sampleHeight(defaultCam.tgtX, defaultCam.tgtZ);
+  app.camera.position.set(defaultCam.camX, camH + defaultCam.clearance, defaultCam.camZ);
+  app.controls.target.set(defaultCam.tgtX, tgtH + defaultCam.tgtClearance, defaultCam.tgtZ);
+  app.controls.update();
+
+  // Disable chunk skirts for clean benchmark review rendering
+  app.noSkirts = true;
+
+  // Force chunk rebuild centered on new target (default init was centered at origin)
+  app.centerCX = Infinity;
+  app.centerCZ = Infinity;
+  app.updateChunks();
+
+  /** Capture all benchmark views (pre- or post-erosion) */
+  (window as any).__benchmarkCapture = async function(stage: string = 'initial') {
+    const wasClay = app.isClayMode();
+    if (!wasClay) app.setClayMode(true);
+
+    console.log(`[benchmark] capturing ${BENCHMARK_CAMERAS.length} views (${stage})`);
+
+    for (const cam of BENCHMARK_CAMERAS) {
+      const ch = terrainSource.sampleHeight(cam.camX, cam.camZ);
+      const th = terrainSource.sampleHeight(cam.tgtX, cam.tgtZ);
+      app.camera.position.set(cam.camX, ch + cam.clearance, cam.camZ);
+      app.controls.target.set(cam.tgtX, th + cam.tgtClearance, cam.tgtZ);
+      app.controls.update();
+
+      // Recenter chunks on new target for this view
+      app.centerCX = Infinity;
+      app.centerCZ = Infinity;
+      app.updateChunks();
+
+      await new Promise(r => setTimeout(r, 500));
+      app.update();
+      await new Promise(r => setTimeout(r, 500));
+
+      const image = await app.captureFrame();
+      const label = `benchmark_${stage}_${cam.name}`;
+
+      const metadata = {
+        ...app.getSnapshotState(),
+        benchmarkStage: stage,
+        benchmarkView: cam.name,
+        benchmarkJudges: cam.judges,
+        clayMode: true,
+      };
+
+      try {
+        const resp = await fetch('/api/snapshot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image, label, format: 'png', metadata }),
+        });
+        if (resp.ok) {
+          const result = await resp.json();
+          console.log(`[benchmark] ${cam.name} (${stage}): ${result.id}`);
+        }
+      } catch (err) {
+        console.error(`[benchmark] ${cam.name} failed:`, err);
+      }
+    }
+
+    if (!wasClay) app.setClayMode(false);
+    console.log(`[benchmark] capture complete (${stage})`);
+  };
+
+  /** Stage-isolation diagnostics: re-bake and capture after each pipeline stage */
+  (window as any).__benchmarkDiagnostics = async function() {
+    const { createReferenceBenchmarkHeightfield, BENCHMARK_EROSION } = await import('./engine/terrain/benchmarkHeightfield');
+    const { runBake } = await import('./engine/bake/terrainBakeManager');
+    const { BakedTerrainSource } = await import('./engine/bake/bakedTerrainSource');
+
+    const benchHF = createReferenceBenchmarkHeightfield();
+    // Use the explicit benchmark erosion config (H2.1c.1 fix)
+    const { MACRO_PRESETS } = await import('./engine/terrain/macroTerrain');
+    const bakeRequest = {
+      macro: MACRO_PRESETS['chain'],
+      erosion: BENCHMARK_EROSION,
+    };
+
+    // Collect stage grids
+    const stageGrids: Array<{ stage: string; grid: Float32Array }> = [];
+
+    console.log('[diagnostics] running bake with stage captures...');
+
+    const artifacts = await runBake(bakeRequest, undefined, benchHF.grid, (stage, grid) => {
+      stageGrids.push({ stage, grid: new Float32Array(grid) });
+      console.log(`[diagnostics] captured stage: ${stage}`);
+    });
+
+    // Render and capture each stage from reference-wide camera
+    const wasClay = app.isClayMode();
+    if (!wasClay) app.setClayMode(true);
+
+    const cam = BENCHMARK_CAMERAS[0]; // reference-wide
+    for (const { stage, grid } of stageGrids) {
+      // Swap terrain to this stage's grid
+      const stageSource = new BakedTerrainSource(benchHF, { ...artifacts, heightGrid: grid });
+      app.applyNewTerrain({ source: stageSource, bakeArtifacts: { ...artifacts, heightGrid: grid }, domain: terrainDomain });
+
+      // Position camera
+      const ch = stageSource.sampleHeight(cam.camX, cam.camZ);
+      const th = stageSource.sampleHeight(cam.tgtX, cam.tgtZ);
+      app.camera.position.set(cam.camX, ch + cam.clearance, cam.camZ);
+      app.controls.target.set(cam.tgtX, th + cam.tgtClearance, cam.tgtZ);
+      app.controls.update();
+      app.centerCX = Infinity;
+      app.centerCZ = Infinity;
+      app.updateChunks();
+
+      await new Promise(r => setTimeout(r, 800));
+      app.update();
+      await new Promise(r => setTimeout(r, 500));
+
+      const image = await app.captureFrame();
+      const label = `diag_${stage}_wide`;
+      const metadata = { ...app.getSnapshotState(), diagnosticStage: stage, clayMode: true };
+
+      try {
+        const resp = await fetch('/api/snapshot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image, label, format: 'png', metadata }),
+        });
+        if (resp.ok) {
+          const result = await resp.json();
+          console.log(`[diagnostics] ${stage}: ${result.id}`);
+        }
+      } catch (err) {
+        console.error(`[diagnostics] ${stage} failed:`, err);
+      }
+    }
+
+    if (!wasClay) app.setClayMode(false);
+    console.log(`[diagnostics] complete — ${stageGrids.length} stages captured`);
+  };
+
+  /** H2.cal: Parameter sweep — test multiple erosion configs, capture after-stream-power */
+  (window as any).__calibrationSweep = async function() {
+    const { createReferenceBenchmarkHeightfield, BENCHMARK_EROSION } = await import('./engine/terrain/benchmarkHeightfield');
+    const { executeBake } = await import('./engine/bake/terrainBakePipeline');
+    const { BakedTerrainSource } = await import('./engine/bake/bakedTerrainSource');
+
+    // Parameter grid
+    const configs = [
+      { label: 'K0005_I80_U01',   K: 0.0005, iter: 80,  uplift: 0.01  },
+      { label: 'K001_I80_U01',    K: 0.001,  iter: 80,  uplift: 0.01  },
+      { label: 'K002_I80_U01',    K: 0.002,  iter: 80,  uplift: 0.01  },
+      { label: 'K001_I120_U005',  K: 0.001,  iter: 120, uplift: 0.005 },
+      { label: 'K002_I120_U005',  K: 0.002,  iter: 120, uplift: 0.005 },
+      { label: 'K001_I160_U0',    K: 0.001,  iter: 160, uplift: 0.0   },
+      { label: 'K002_I160_U0',    K: 0.002,  iter: 160, uplift: 0.0   },
+      { label: 'K002_I220_U0',    K: 0.002,  iter: 220, uplift: 0.0   },
+    ];
+
+    // Use 512 grid for speed (4x faster than 1024)
+    const gridSize = 512;
+    const extent = 800;
+
+    const wasClay = app.isClayMode();
+    if (!wasClay) app.setClayMode(true);
+
+    console.log(`[cal] starting sweep: ${configs.length} configs at ${gridSize}² grid`);
+
+    for (const cfg of configs) {
+      const t0 = performance.now();
+
+      // Generate benchmark heightfield at reduced resolution
+      const { EditableHeightfield } = await import('./engine/terrain/editableHeightfield');
+      const hf = new EditableHeightfield(gridSize, extent);
+      // Sample the benchmark shape into this grid
+      const fullHF = createReferenceBenchmarkHeightfield();
+      const cs = (extent * 2) / (gridSize - 1);
+      for (let z = 0; z < gridSize; z++) {
+        for (let x = 0; x < gridSize; x++) {
+          const wx = -extent + x * cs;
+          const wz = -extent + z * cs;
+          hf.grid[z * gridSize + x] = fullHF.sampleHeight(wx, wz);
+        }
+      }
+
+      // Build config
+      const erosionCfg = {
+        ...BENCHMARK_EROSION,
+        gridSize,
+        extent,
+        streamPower: {
+          ...BENCHMARK_EROSION.streamPower,
+          iterations: cfg.iter,
+          erosionK: cfg.K,
+          upliftRate: cfg.uplift,
+        },
+      };
+
+      // Run bake (main thread for simplicity — 512 grid is fast enough)
+      let afterSPGrid: Float32Array | null = null;
+      const { MACRO_PRESETS } = await import('./engine/terrain/macroTerrain');
+      const artifacts = executeBake(
+        { macro: MACRO_PRESETS['chain'], erosion: erosionCfg },
+        hf.grid,
+        (stage, grid) => {
+          if (stage === 'after-stream-power') afterSPGrid = new Float32Array(grid);
+        },
+      );
+
+      const elapsed = performance.now() - t0;
+
+      // Render after-stream-power result
+      if (afterSPGrid) {
+        const src = new BakedTerrainSource(hf, { ...artifacts, heightGrid: afterSPGrid });
+        app.applyNewTerrain({ source: src, bakeArtifacts: { ...artifacts, heightGrid: afterSPGrid }, domain: terrainDomain });
+
+        const cam = BENCHMARK_CAMERAS[0]; // wide
+        const ch = src.sampleHeight(cam.camX, cam.camZ);
+        const th = src.sampleHeight(cam.tgtX, cam.tgtZ);
+        app.camera.position.set(cam.camX, ch + cam.clearance, cam.camZ);
+        app.controls.target.set(cam.tgtX, th + cam.tgtClearance, cam.tgtZ);
+        app.controls.update();
+        app.centerCX = Infinity;
+        app.centerCZ = Infinity;
+        app.updateChunks();
+
+        await new Promise(r => setTimeout(r, 600));
+        app.update();
+        await new Promise(r => setTimeout(r, 400));
+
+        const image = await app.captureFrame();
+        const metadata = { calibration: cfg, elapsed: Math.round(elapsed), gridSize };
+
+        try {
+          const resp = await fetch('/api/snapshot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image, label: `cal_${cfg.label}_sp_wide`, format: 'png', metadata }),
+          });
+          if (resp.ok) {
+            const result = await resp.json();
+            console.log(`[cal] ${cfg.label}: ${Math.round(elapsed)}ms → ${result.id}`);
+          }
+        } catch (err) {
+          console.error(`[cal] ${cfg.label} failed:`, err);
+        }
+      }
+    }
+
+    if (!wasClay) app.setClayMode(false);
+    console.log(`[cal] sweep complete`);
+  };
+}
 
 // ── Animate ──
 function animate() {

@@ -220,6 +220,8 @@ export class InspectorPanel extends LitElement {
             <button style="flex:1; padding:5px; font:10px/1 monospace; background:rgba(60,60,65,0.8); color:#bbb; border:0; border-radius:4px; cursor:pointer;"
               @click=${() => this._fire('test-environment', null)}>Test Env</button>
           </div>
+          <button style="padding:5px; font:10px/1 monospace; background:rgba(80,60,100,0.85); color:#dcc; border:0; border-radius:4px; cursor:pointer;"
+            @click=${() => this._fire('reference-benchmark', null)}>Reference Benchmark</button>
           <div style="display:flex; gap:4px;">
             <button style="flex:1; padding:5px; font:10px/1 monospace; background:rgba(60,60,65,0.8); color:#bbb; border:0; border-radius:4px; cursor:pointer;"
               @click=${() => this._fire('save-project', null)}>Save</button>

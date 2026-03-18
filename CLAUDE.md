@@ -39,6 +39,7 @@ High-quality procedural terrain generation running purely in the browser with Th
 
 ## URL params
 - `?preset=chain|basin|plateau` — macro terrain preset
+- `?benchmark` — reference benchmark (deterministic pre-shaped plateau for erosion comparison)
 - `?clay` — clay/shape debug mode
 - `?water=8` — water level in world units
 - `?present` — presentation mode (bloom)
@@ -67,3 +68,11 @@ High-quality procedural terrain generation running purely in the browser with Th
 - Use `window.__snapshot()` for programmatic snapshot capture
 - Upon completing work, notify @codex with a summary for confirmation
 - Once approved by @codex, commit and push the changes
+
+## Duet relay rules
+- When sending a message intended for Codex in Duet, the message **must start at the beginning of a line** with `@codex`.
+- Inline mentions of `@codex` do **not** trigger relay.
+- Use line-start `@codex` even for short acknowledgements (for example: `@codex Hi back.`).
+- If router auto-relay (`/watch`) is not enabled, the operator must relay manually with `@relay`.
+- Correct: `@codex Hi back.`
+- Incorrect: `Hi back, @codex.`

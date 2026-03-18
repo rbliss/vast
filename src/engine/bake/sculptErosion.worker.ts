@@ -10,6 +10,9 @@ import { streamPowerErosion, DEFAULT_STREAM_POWER } from '../terrain/streamPower
 import type { StreamPowerParams } from '../terrain/streamPower';
 import { applyChannelGeometry } from '../terrain/channelGeometry';
 import { applyHillslopeTransport } from '../terrain/hillslopeTransport';
+import { applyTerraceFormation } from '../terrain/terraceFormation';
+import { applyFanDeposition } from '../terrain/fanDeposition';
+import { thermalErosion } from '../terrain/erosion';
 import { generateResistanceGrid } from '../terrain/resistanceField';
 
 interface ErosionRequest {
@@ -23,6 +26,8 @@ interface ErosionRequest {
   channelGeometry: boolean;
   hillslope: boolean;
   resistance: boolean;
+  /** Run full bake stages (terraces, fans, thermal) after erosion */
+  fullPipeline: boolean;
 }
 
 self.onmessage = (e: MessageEvent) => {
@@ -61,8 +66,8 @@ self.onmessage = (e: MessageEvent) => {
       }
     });
 
-    // Channel geometry
-    if (msg.channelGeometry) {
+    // Channel geometry — skip in fullPipeline mode (creates synthetic contour artifacts)
+    if (msg.channelGeometry && !msg.fullPipeline) {
       const chanResistance = msg.resistance
         ? generateResistanceGrid(grid, n, n, extent, cs)
         : undefined;
@@ -75,6 +80,16 @@ self.onmessage = (e: MessageEvent) => {
         ? generateResistanceGrid(grid, n, n, extent, cs)
         : undefined;
       applyHillslopeTransport(grid, n, n, cs, undefined, hillResistance);
+    }
+
+    // Full pipeline stages (fans, thermal) — for benchmark realism
+    // Note: terraces and channel geometry are skipped to avoid synthetic artifacts
+    if (msg.fullPipeline && spResult) {
+      // Fan / debris deposition
+      applyFanDeposition(grid, spResult.area, spResult.receiver, spResult.slopes, n, n, cs);
+
+      // Thermal relaxation (smooths oversteepened faces)
+      thermalErosion(grid, n, n, cs, { iterations: 10, talusThreshold: 1.5, transferRate: 0.3 });
     }
 
     const elapsed = performance.now() - t0;

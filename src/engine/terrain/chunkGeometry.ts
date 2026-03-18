@@ -225,7 +225,7 @@ export function lodForRingPos(dx: number, dz: number): LodLevel {
 }
 
 /** Mutate existing buffers in-place. Zero allocation. */
-export function rebuildChunkSlot(slot: ChunkSlot, centerCX: number, centerCZ: number, terrain: TerrainSource): boolean {
+export function rebuildChunkSlot(slot: ChunkSlot, centerCX: number, centerCZ: number, terrain: TerrainSource, noSkirts: boolean = false): boolean {
   const cx = centerCX + slot.dx;
   const cz = centerCZ + slot.dz;
   if (cx === slot.cx && cz === slot.cz) return false;
@@ -270,7 +270,8 @@ export function rebuildChunkSlot(slot: ChunkSlot, centerCX: number, centerCZ: nu
     if (y > maxY) maxY = y;
   }
   const localRange = maxY - minY;
-  const adaptiveSkirt = Math.max(SKIRT_DEPTH, localRange * 0.5);
+  // In noSkirts mode (editable/benchmark), collapse skirt to edge height (no visible drop)
+  const adaptiveSkirt = noSkirts ? 0 : Math.max(SKIRT_DEPTH, localRange * 0.5);
 
   // Update skirt vertices: Y = edge Y - adaptive depth, UV = edge UV
   for (let i = 0; i < slot.skirtVertCount; i++) {

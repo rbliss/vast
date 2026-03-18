@@ -15,6 +15,8 @@ export interface SculptErosionOpts {
   channelGeometry: boolean;
   hillslope: boolean;
   resistance: boolean;
+  /** Run full bake stages (terraces, fans, thermal) after erosion */
+  fullPipeline?: boolean;
   onProgress?: (iteration: number) => void;
   onPreview?: (grid: Float32Array, iteration: number) => void;
 }
@@ -84,6 +86,7 @@ export function runSculptErosion(opts: SculptErosionOpts): Promise<SculptErosion
       channelGeometry: opts.channelGeometry,
       hillslope: opts.hillslope,
       resistance: opts.resistance,
+      fullPipeline: opts.fullPipeline ?? false,
     }, { transfer: [opts.grid.buffer] });
 
     console.log('[erosion] dispatched to worker');

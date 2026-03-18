@@ -26,7 +26,37 @@ import { generateResistanceGrid } from '../terrain/resistanceField';
  *
  * Returns immutable artifacts suitable for runtime sampling.
  */
-export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
+/**
+ * Execute the full terrain bake pipeline synchronously.
+ *
+ * @param request - Bake configuration (macro terrain + erosion params)
+ * @param preSampledGrid - Optional pre-built height grid (skips macro sampling).
+ *   Used by the benchmark to feed a deterministic heightfield through
+ *   the same pipeline as production.
+ */
+/**
+ * Stage capture callback: receives a copy of the grid after each pipeline stage.
+ * Used for diagnostics (H2.1b.1) to identify where tributaries are lost.
+ */
+export type StageCaptureCallback = (stage: string, grid: Float32Array) => void;
+
+/** Log per-stage numeric diagnostics */
+function logStageDiag(stage: string, grid: Float32Array, initial: Float32Array) {
+  let maxDelta = 0, totalDelta = 0, changedCells = 0;
+  for (let i = 0; i < grid.length; i++) {
+    const d = Math.abs(grid[i] - initial[i]);
+    if (d > 0.001) { changedCells++; totalDelta += d; }
+    if (d > maxDelta) maxDelta = d;
+  }
+  const meanDelta = changedCells > 0 ? totalDelta / changedCells : 0;
+  console.log(`[bake-diag] ${stage}: maxΔ=${maxDelta.toFixed(2)} meanΔ=${meanDelta.toFixed(3)} changed=${changedCells} (${(changedCells/grid.length*100).toFixed(1)}%)`);
+}
+
+export function executeBake(
+  request: TerrainBakeRequest,
+  preSampledGrid?: Float32Array,
+  onStageCapture?: StageCaptureCallback,
+): TerrainBakeArtifacts {
   const { macro, erosion } = request;
   const n = erosion.gridSize;
   const extent = erosion.extent;
@@ -34,18 +64,26 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
 
   const t0 = performance.now();
 
-  // ── Stage 1: Sample macro terrain ──
+  // ── Stage 1: Sample macro terrain (or use pre-sampled grid) ──
   const tSample0 = performance.now();
-  const base = new MacroTerrainSource(macro);
-  const grid = new Float32Array(n * n);
-  for (let z = 0; z < n; z++) {
-    for (let x = 0; x < n; x++) {
-      const wx = -extent + x * cellSize;
-      const wz = -extent + z * cellSize;
-      grid[z * n + x] = base.sampleHeight(wx, wz);
+  let grid: Float32Array;
+  if (preSampledGrid && preSampledGrid.length === n * n) {
+    grid = new Float32Array(preSampledGrid); // copy to avoid mutating the source
+  } else {
+    const base = new MacroTerrainSource(macro);
+    grid = new Float32Array(n * n);
+    for (let z = 0; z < n; z++) {
+      for (let x = 0; x < n; x++) {
+        const wx = -extent + x * cellSize;
+        const wz = -extent + z * cellSize;
+        grid[z * n + x] = base.sampleHeight(wx, wz);
+      }
     }
   }
   const tSample = performance.now() - tSample0;
+
+  // Save initial state for per-stage diagnostics
+  const initialGrid = new Float32Array(grid);
 
   // ── Stage 2: Stream-power erosion (with dynamic per-iteration resistance) ──
   // Resistance generator: recomputes strata from current evolving heights each iteration
@@ -60,6 +98,8 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
     tStreamPower = performance.now() - t;
     console.log(`[bake] stream-power: ${erosion.streamPower.iterations} iterations (${tStreamPower.toFixed(0)}ms)`);
   }
+  logStageDiag('after-stream-power', grid, initialGrid);
+  onStageCapture?.('after-stream-power', new Float32Array(grid));
 
   // ── Stage 2b: Channel geometry shaping (resistance-aware) ──
   if (spResult) {
@@ -68,6 +108,8 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
     applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize, undefined, postChannelResistance);
     console.log(`[bake] channel geometry (${(performance.now() - tChan0).toFixed(0)}ms)`);
   }
+  logStageDiag('after-channel-geometry', grid, initialGrid);
+  onStageCapture?.('after-channel-geometry', new Float32Array(grid));
 
   // ── Stage 2c: Hillslope transport / mass wasting (resistance-aware) ──
   {
@@ -77,6 +119,8 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
     applyHillslopeTransport(grid, n, n, cellSize, undefined, postErosionResistance);
     console.log(`[bake] hillslope transport (${(performance.now() - tHill0).toFixed(0)}ms)`);
   }
+  logStageDiag('after-hillslope', grid, initialGrid);
+  onStageCapture?.('after-hillslope', new Float32Array(grid));
 
   // ── Stage 2d: Terrace / bench formation ──
   if (spResult) {
@@ -95,6 +139,8 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
     applyTerraceFormation(grid, spResult.area, terrSlopes, n, n, cellSize);
     console.log(`[bake] terrace formation (${(performance.now() - tTerr0).toFixed(0)}ms)`);
   }
+  logStageDiag('after-terraces', grid, initialGrid);
+  onStageCapture?.('after-terraces', new Float32Array(grid));
 
   // ── Stage 3: Fan/debris deposition ──
   const depositionAccum = spResult?.deposition ?? new Float32Array(n * n);
@@ -114,6 +160,8 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
     tFan = performance.now() - t;
     console.log(`[bake] fan deposition (${tFan.toFixed(0)}ms)`);
   }
+  logStageDiag('after-fan-deposition', grid, initialGrid);
+  onStageCapture?.('after-fan-deposition', new Float32Array(grid));
 
   // ── Stage 4: Thermal relaxation ──
   let tThermal = 0;
@@ -123,6 +171,8 @@ export function executeBake(request: TerrainBakeRequest): TerrainBakeArtifacts {
     tThermal = performance.now() - t;
     console.log(`[bake] thermal: ${erosion.thermal.iterations} iterations (${tThermal.toFixed(0)}ms)`);
   }
+  logStageDiag('after-thermal', grid, initialGrid);
+  onStageCapture?.('after-thermal', new Float32Array(grid));
 
   const totalTime = performance.now() - t0;
   console.log(`[bake] complete: ${totalTime.toFixed(0)}ms (${n}x${n} grid, extent ±${extent})`);

@@ -363,8 +363,12 @@ export class TerrainApp {
 
   private _editableHF: EditableHeightfield | null = null;
   private _brushPreview: THREE.Mesh | null = null;
+  private _noSkirts = false;
 
   get isEditable(): boolean { return this._editableHF !== null; }
+
+  /** Disable chunk skirts (for benchmark/editable review rendering) */
+  set noSkirts(v: boolean) { this._noSkirts = v; }
 
   /** Create/update brush preview ring on terrain */
   updateBrushPreview(worldX: number, worldZ: number, radius: number): void {
@@ -396,35 +400,59 @@ export class TerrainApp {
   /** Initialize editable heightfield mode (blank canvas) */
   initEditableMode(gridSize: number = 256, extent: number = 200, existing?: EditableHeightfield): void {
     this._editableHF = existing ?? new EditableHeightfield(gridSize, extent);
+    this._noSkirts = true;
     this.terrain = this._editableHF;
 
     // Rebuild all slots at uniform LOD for seamless sculpting
     this._rebuildSlotsUniformLOD();
 
-    // Add subtle fog for blank canvas — fades non-editable areas into haze
+    // Add fog for editable mode — fades terrain edges into haze, hides skirt artifacts
     (this.scene as any).fog = new THREE.FogExp2(0xc8c8d0, 0.0008);
     // Match background to fog color for seamless horizon
     (this.scene as any).background = new THREE.Color(0xc8c8d0);
 
     // Add large ground plane for horizon continuity
-    this._addGroundPlane();
+    // Sample terrain min height to position ground plane just below it (covers skirt artifacts)
+    const hf = this._editableHF;
+    let minH = Infinity;
+    for (let i = 0; i < Math.min(100, hf.grid.length); i += 10) {
+      if (hf.grid[i] > 0 && hf.grid[i] < minH) minH = hf.grid[i];
+    }
+    const groundY = minH > 0.5 && minH < Infinity ? minH - 0.1 : -0.1;
+    this._addGroundPlane(groundY);
     // Force rebuild all chunks
     this.centerCX = Infinity;
     this.centerCZ = Infinity;
     this.updateChunks();
 
-    // Hide chunks fully outside the editable extent (let gray plane show)
+    // Hide chunks fully outside the editable extent or with zero terrain data
     const hfExtent = this._editableHF.extent;
     const halfChunk = CHUNK_SIZE / 2;
     for (const slot of this.slots) {
-      const slotMinX = (this.centerCX + slot.dx) * CHUNK_SIZE - halfChunk;
+      const slotCX = this.centerCX + slot.dx;
+      const slotCZ = this.centerCZ + slot.dz;
+      const slotMinX = slotCX * CHUNK_SIZE - halfChunk;
       const slotMaxX = slotMinX + CHUNK_SIZE;
-      const slotMinZ = (this.centerCZ + slot.dz) * CHUNK_SIZE - halfChunk;
+      const slotMinZ = slotCZ * CHUNK_SIZE - halfChunk;
       const slotMaxZ = slotMinZ + CHUNK_SIZE;
 
       // Fully outside editable extent?
       if (slotMinX > hfExtent || slotMaxX < -hfExtent ||
           slotMinZ > hfExtent || slotMaxZ < -hfExtent) {
+        slot.mesh.visible = false;
+        continue;
+      }
+
+      // Check if chunk has any non-zero terrain data (hide empty chunks)
+      const hf = this._editableHF;
+      let hasData = false;
+      const step = CHUNK_SIZE / 4; // sample 5x5 grid within chunk
+      for (let sz = slotMinZ; sz <= slotMaxZ && !hasData; sz += step) {
+        for (let sx = slotMinX; sx <= slotMaxX && !hasData; sx += step) {
+          if (hf.sampleHeight(sx, sz) > 0.5) hasData = true;
+        }
+      }
+      if (!hasData) {
         slot.mesh.visible = false;
       }
     }
@@ -458,10 +486,10 @@ export class TerrainApp {
   }
 
   /** Add a large ground plane extending far beyond the editable area — visually distinct gray */
-  private _addGroundPlane(): void {
+  private _addGroundPlane(height: number = -0.1): void {
     if (this._groundPlane) return;
     const size = 6000; // extends ±3000 from center
-    const geo = new THREE.PlaneGeometry(size, size, 8, 8);
+    const geo = new THREE.PlaneGeometry(size, size, 1, 1); // single quad — no wireframe artifacts
     geo.rotateX(-Math.PI / 2);
     // Non-editable area: bluish-gray haze color, suggests distance/atmosphere
     const mat = new THREE.MeshStandardMaterial({
@@ -471,7 +499,7 @@ export class TerrainApp {
       fog: true,
     });
     this._groundPlane = new THREE.Mesh(geo, mat);
-    this._groundPlane.position.y = -0.1;
+    this._groundPlane.position.y = height;
     this._groundPlane.receiveShadow = true;
     (this.scene as any).add(this._groundPlane);
   }
@@ -486,6 +514,7 @@ export class TerrainApp {
     channelGeometry?: boolean;
     hillslope?: boolean;
     resistance?: boolean;
+    fullPipeline?: boolean;
     onProgress?: (iteration: number) => void;
     onComplete?: () => void;
     onError?: (err: string) => void;
@@ -510,6 +539,7 @@ export class TerrainApp {
       channelGeometry: opts.channelGeometry !== false,
       hillslope: opts.hillslope !== false,
       resistance: opts.resistance !== false,
+      fullPipeline: opts.fullPipeline ?? false,
       onProgress: opts.onProgress,
       onPreview: (previewGrid, _iter) => {
         // Apply preview to heightfield and rebuild visible chunks
@@ -775,7 +805,7 @@ export class TerrainApp {
 
     let rebuilt = 0;
     for (const slot of this.slots) {
-      if (rebuildChunkSlot(slot, this.centerCX, this.centerCZ, this.terrain)) {
+      if (rebuildChunkSlot(slot, this.centerCX, this.centerCZ, this.terrain, this._noSkirts)) {
         const d = Math.max(Math.abs(slot.dx), Math.abs(slot.dz));
         this.foliage.rebuild(slot.foliage, slot.cx, slot.cz, d >= BASE_GRID_RADIUS, this.terrain, this._fieldTextures, this._scatterParams);
         // Recompute overlay for rebuilt slots

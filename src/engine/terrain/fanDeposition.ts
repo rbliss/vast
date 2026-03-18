@@ -38,16 +38,16 @@ export interface FanParams {
 }
 
 export const DEFAULT_FAN_PARAMS: FanParams = {
-  minDrainageArea: 500,
+  minDrainageArea: 300,    // H2.1c: world-area units (m²), was 500 cell-count
   confinementDropThreshold: 0.2,
   fanHalfAngle: Math.PI * 0.4,
   fanSlope: 0.08,
-  maxFanRadius: 40,
+  maxFanRadius: 30,          // H2.1c.1: world units (m), was 40 cells
   fanBlend: 0.8,
   debrisEnabled: true,
   debrisSlopeThreshold: 2.0,
-  debrisMaxArea: 15,
-  debrisRadius: 10,
+  debrisMaxArea: 10,       // H2.1c: world-area units (m²), was 15 cell-count
+  debrisRadius: 8,           // H2.1c.1: world units (m), was 10 cells
   debrisRate: 0.2,
 };
 
@@ -140,7 +140,7 @@ function stampFans(
   params: FanParams,
 ): void {
   for (const apex of apices) {
-    const maxR = params.maxFanRadius;
+    const maxR = Math.round(params.maxFanRadius / cellSize); // world→cells
     const halfAngle = params.fanHalfAngle;
 
     // Scale fan size and deposit by drainage area
@@ -227,7 +227,7 @@ function debrisFlowDeposits(
       if (bestDrop <= 0) continue;
 
       // Deposit debris in a cone downslope
-      const r = params.debrisRadius;
+      const r = Math.round(params.debrisRadius / cellSize); // world→cells
       for (let dz = -r; dz <= r; dz++) {
         for (let dx = -r; dx <= r; dx++) {
           const px = x + dx;

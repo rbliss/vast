@@ -28,12 +28,12 @@ export interface ChannelGeometryParams {
 }
 
 export const DEFAULT_CHANNEL_PARAMS: ChannelGeometryParams = {
-  minArea: 25,
-  widthCoeff: 0.8,
+  minArea: 15,             // H2.1c: world-area units (m²), was 25 cell-count
+  widthCoeff: 0.25,        // H2.1c: recalibrated for world-area A
   widthExponent: 0.48,
-  depthCoeff: 0.2,
+  depthCoeff: 0.06,        // H2.1c: recalibrated for world-area A
   depthExponent: 0.38,
-  maxHalfWidth: 10,
+  maxHalfWidth: 8,             // H2.1c.1: world units (m), was 10 cells
   bankSteepness: 0.45,
 };
 
@@ -74,7 +74,8 @@ export function applyChannelGeometry(
     const widthWorld = params.widthCoeff * Math.pow(effectiveArea, params.widthExponent) * Math.sqrt(R);
     const depth = params.depthCoeff * Math.pow(effectiveArea, params.depthExponent) * R;
 
-    const halfWidthCells = Math.min(params.maxHalfWidth, widthWorld / cellSize);
+    const maxHalfWidthCells = params.maxHalfWidth / cellSize; // world→cells
+    const halfWidthCells = Math.min(maxHalfWidthCells, widthWorld / cellSize);
 
     channelDepth[i] = depth;
     channelRadius[i] = halfWidthCells;

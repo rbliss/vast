@@ -27,7 +27,7 @@ export interface TerraceParams {
 
 export const DEFAULT_TERRACE_PARAMS: TerraceParams = {
   levels: 3,
-  minDrainageArea: 60,
+  minDrainageArea: 40,     // H2.1c: world-area units (m²), was 60 cell-count
   maxSlope: 0.4,
   benchWidth: 4,
   levelDrop: 1.5,

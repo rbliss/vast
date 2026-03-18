@@ -49,17 +49,17 @@ export interface StreamPowerParams {
 
 export const DEFAULT_STREAM_POWER: StreamPowerParams = {
   iterations: 35,
-  erosionK: 0.006,
-  areaExponent: 0.5,
+  erosionK: 0.0003,        // H2.1c: recalibrated for world-area A (was 0.008 for cell-count A)
+  areaExponent: 0.4,       // H2.1: reduced from 0.5 to let small tributaries erode more
   slopeExponent: 1.0,
   dt: 1.0,
-  diffusionRate: 0.005,
+  diffusionRate: 0.003,    // H2.1: reduced from 0.005 to preserve tributary detail
   minSlope: 0.001,
-  upliftRate: 0.1,
+  upliftRate: 0.02,        // H2.1c: reduced from 0.06 to allow erosion at benchmark scale
   maxErosion: 0.5,
   depositionEnabled: true,
   sedimentFraction: 0.6,
-  transportK: 0.08,
+  transportK: 0.003,       // H2.1c: recalibrated for world-area A
   transportAreaExp: 0.4,
   transportSlopeExp: 1.1,
 };
@@ -219,6 +219,48 @@ function computeSlopes(
   }
 
   return slopes;
+}
+
+/**
+ * Compute planform (contour) curvature at each cell.
+ *
+ * Planform curvature measures flow convergence/divergence:
+ *   positive = convergent (hollow/channel head) → water concentrates
+ *   negative = divergent (ridge/nose) → water spreads
+ *   zero = planar slope
+ *
+ * Uses the second-order surface fit method (Zevenbergen & Thorne 1987).
+ * Returns raw curvature values (not clamped).
+ */
+function computePlanformCurvature(
+  grid: Float32Array, w: number, h: number, cellSize: number,
+): Float32Array {
+  const curv = new Float32Array(w * h);
+  const cs2 = cellSize * cellSize;
+
+  for (let z = 1; z < h - 1; z++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = z * w + x;
+
+      // First derivatives (central differences)
+      const p = (grid[idx + 1] - grid[idx - 1]) / (2 * cellSize);     // dh/dx
+      const q = (grid[idx + w] - grid[idx - w]) / (2 * cellSize);     // dh/dz
+
+      // Second derivatives
+      const r = (grid[idx + 1] - 2 * grid[idx] + grid[idx - 1]) / cs2; // d²h/dx²
+      const t = (grid[idx + w] - 2 * grid[idx] + grid[idx - w]) / cs2; // d²h/dz²
+      const s = (grid[idx + w + 1] - grid[idx + w - 1]
+               - grid[idx - w + 1] + grid[idx - w - 1]) / (4 * cs2);   // d²h/dxdz
+
+      // Planform curvature: positive = convergent (hollow)
+      const denom = p * p + q * q;
+      if (denom > 1e-10) {
+        curv[idx] = -(q * q * r - 2 * p * q * s + p * p * t) / Math.pow(denom, 1.5);
+      }
+    }
+  }
+
+  return curv;
 }
 
 /**
@@ -442,6 +484,11 @@ export function streamPowerErosion(
   let lastReceiver: Int32Array = new Int32Array(n);
   let lastSlopes: Float32Array = new Float32Array(n);
 
+  // H2.4a: Persistent proto-channel susceptibility field
+  // Accumulates across iterations from multiscale convergence signals + headward support.
+  // Used to modulate channel-initiation threshold — NOT direct carving.
+  const protoChannel = new Float32Array(n);
+
   for (let iter = 0; iter < iterations; iter++) {
     if (onProgress) onProgress(iter + 1);
 
@@ -451,12 +498,104 @@ export function streamPowerErosion(
     // Step 1: Flow accumulation + receiver graph
     const flowResult = computeFlowAccumulation(grid, w, h, cellSize);
     const { area, receiver } = flowResult;
+
+    // H2.1c: Convert drainage area from cell-count to world-area units
+    // This makes all thresholds scale-independent across grid resolutions
+    const cellArea = cellSize * cellSize;
+    for (let i = 0; i < n; i++) {
+      area[i] *= cellArea;
+    }
+
     lastArea = area as Float32Array;
     lastReceiver = receiver as Int32Array;
 
     // Step 2: Slopes
     const slopes = computeSlopes(grid, w, h, cellSize);
     lastSlopes = slopes as Float32Array;
+
+    // Step 2b: Planform curvature (convergence detection for tributary initiation)
+    const curvature = computePlanformCurvature(grid, w, h, cellSize);
+
+    // Step 2c: Update proto-channel susceptibility field (H2.4a)
+    // Combines multiscale convergence + headward support into a persistent field.
+    // This field modulates channel-initiation threshold — no direct carving.
+    {
+      const baseThreshold = 20.0;
+      const decayRate = 0.97;        // H2.4b: higher persistence — field accumulates over more iterations
+      const convergenceGain = 0.08;  // H2.4b: slightly stronger convergence signal
+      const reliefGain = 0.05;       // H2.4b: slightly stronger relief signal
+      const headwardGain = 0.25;     // H2.4b: much stronger headward support — main tributary driver
+
+      // Decay existing field
+      for (let i = 0; i < n; i++) {
+        protoChannel[i] *= decayRate;
+      }
+
+      for (let z = 3; z < h - 3; z++) {
+        for (let x = 3; x < w - 3; x++) {
+          const idx = z * w + x;
+          const A_here = area[idx];
+          const S_here = slopes[idx];
+          const sai = A_here * S_here;
+
+          // Skip already-channelized cells (they don't need susceptibility)
+          if (sai > baseThreshold) continue;
+          // Skip very flat interior
+          if (S_here < 0.02) continue;
+
+          // ── Signal 1: Local convergence (planform curvature) ──
+          const localConv = Math.max(0, curvature[idx]);
+          protoChannel[idx] += localConv * convergenceGain;
+
+          // ── Signal 2: Neighborhood relief (break-in-slope at radius 5) ──
+          let neighborSum = 0, neighborCount = 0;
+          for (let dz = -5; dz <= 5; dz += 2) {
+            for (let dx = -5; dx <= 5; dx += 2) {
+              if (dx === 0 && dz === 0) continue;
+              const ni = (z + dz) * w + (x + dx);
+              if (ni >= 0 && ni < n) { neighborSum += grid[ni]; neighborCount++; }
+            }
+          }
+          if (neighborCount > 0) {
+            const neighborMean = neighborSum / neighborCount;
+            const belowMean = Math.max(0, neighborMean - grid[idx]);
+            protoChannel[idx] += belowMean * reliefGain / Math.max(1, cellSize);
+          }
+
+          // ── Signal 3: Rim / escarpment context ──
+          // Stronger near steep neighbors (escarpment heads)
+          const nearSteep = slopes[idx + 1] > 0.4 || slopes[idx - 1] > 0.4 ||
+                            slopes[idx + w] > 0.4 || slopes[idx - w] > 0.4;
+          if (nearSteep && A_here > 10 && A_here < 300) {
+            protoChannel[idx] += S_here * convergenceGain * 2.0;
+          }
+
+          // ── Signal 4: Headward support from existing channel heads ──
+          // If a downstream neighbor IS channelized, this cell gets strong susceptibility.
+          // Also check 2nd-order downstream for broader headward influence.
+          const recv = receiver[idx];
+          if (recv >= 0 && recv !== idx) {
+            const recvSAI = area[recv] * slopes[recv];
+            if (recvSAI > baseThreshold) {
+              // Downstream is a channel — this is a potential channel head extension
+              protoChannel[idx] += headwardGain * Math.min(1.0, S_here * 3.0);
+            } else {
+              // Check 2nd-order downstream
+              const recv2 = receiver[recv];
+              if (recv2 >= 0 && recv2 !== recv) {
+                const recv2SAI = area[recv2] * slopes[recv2];
+                if (recv2SAI > baseThreshold) {
+                  protoChannel[idx] += headwardGain * 0.5 * Math.min(1.0, S_here * 2.0);
+                }
+              }
+            }
+          }
+
+          // Clamp to [0, 1]
+          if (protoChannel[idx] > 1.0) protoChannel[idx] = 1.0;
+        }
+      }
+    }
 
     // Step 3: Stream-power incision + sediment production
     if (sedimentFlux) sedimentFlux.fill(0);
@@ -470,40 +609,75 @@ export function streamPowerErosion(
         // Resistance from dynamic strata
         const R = resistance ? resistance[idx] : 1.0;
 
-        // Mesa-top protection: on resistant + flat cells, require much larger
-        // drainage area before channel incision begins (suppresses summit spires)
-        let effectiveA = A;
-        if (R < 0.4 && S < 0.3) {
-          // This is a resistant flat surface — mesa top / tableland
-          // Raise the effective channel-initiation threshold
-          const tablelandFactor = (0.4 - R) / 0.4; // 0-1, stronger for harder rock
-          const flatFactor = (0.3 - S) / 0.3;      // 0-1, stronger for flatter terrain
-          const protection = tablelandFactor * flatFactor;
-          // Reduce effective drainage area → less erosion on mesa top
-          effectiveA = A * (1 - protection * 0.85);
+        // ── Channel initiation model (H2.1b + H2.3 headward propagation) ──
+        const planCurv = curvature[idx];
+
+        // Base channel threshold (world-scale)
+        let channelThreshold = 20.0;
+
+        // Convergence lowers threshold (immediate planform curvature effect)
+        if (planCurv > 0) {
+          channelThreshold *= Math.max(0.15, 1.0 - Math.min(planCurv * 10.0, 0.85));
         }
 
-        // Rim amplification: where slope transitions from flat to steep (rim edge),
-        // slightly amplify erosion to create retreat behavior
-        let rimBoost = 1.0;
-        if (resistance) {
-          // Check if this cell is at a resistance boundary near a steep edge
-          const slopeUp = slopes[idx - w] ?? 0;
-          const slopeDown = slopes[idx + w] ?? 0;
-          const slopeL = slopes[idx - 1] ?? 0;
-          const slopeR = slopes[idx + 1] ?? 0;
-          const maxNeighborSlope = Math.max(slopeUp, slopeDown, slopeL, slopeR);
-          // If we're relatively flat but adjacent to steep terrain → rim edge
-          if (S < 0.5 && maxNeighborSlope > 1.0 && R < 0.5) {
-            rimBoost = 1.0 + (maxNeighborSlope - 1.0) * 0.3;
+        // H2.4a/b: Proto-channel susceptibility lowers threshold
+        // This is the main tributary densification mechanism — persistent field
+        // accumulated from convergence, relief, rim context, and headward support.
+        const proto = protoChannel[idx];
+        if (proto > 0.03) {
+          // H2.4b: stronger effect — susceptibility reduces threshold by up to 90%
+          channelThreshold *= Math.max(0.1, 1.0 - proto * 0.9);
+        }
+
+        // Slope-area index (Montgomery-Dietrich criterion, world-scale)
+        const slopeAreaIndex = A * S;
+        const isChannel = slopeAreaIndex > channelThreshold;
+
+        // Channel intensity: how far above threshold (0 = at threshold, 1+ = well above)
+        const channelIntensity = isChannel
+          ? Math.min((slopeAreaIndex / channelThreshold - 1.0), 3.0)
+          : 0;
+
+        // ── Headward erosion (knickpoint retreat) ──
+        // Above a knickpoint (downstream steeper), amplify erosion to bite inward
+        let headwardBoost = 1.0;
+        const recv = receiver[idx];
+        if (recv >= 0 && recv !== idx) {
+          const recvSlope = slopes[recv] ?? 0;
+          if (recvSlope > S * 1.3 && recvSlope > 0.15) {
+            headwardBoost = 1.0 + Math.min((recvSlope - S) * 2.0, 2.0);
           }
         }
 
-        // E = K * R * A^m * S^n
-        const erosion = Math.min(
-          erosionK * R * rimBoost * Math.pow(effectiveA, areaExponent) * Math.pow(S, slopeExponent),
-          maxErosion,
-        );
+        // ── Mesa-top protection ──
+        // Protect flat resistant interiors, but NOT convergent rim hollows
+        let mesaProtection = 1.0; // 1.0 = no protection
+        if (R < 0.4 && S < 0.3) {
+          const tablelandFactor = (0.4 - R) / 0.4;
+          const flatFactor = (0.3 - S) / 0.3;
+          const rawProtection = tablelandFactor * flatFactor;
+          // Convergent hollows and knickpoints override mesa protection
+          const convergenceOverride = planCurv > 0 ? Math.min(planCurv * 10.0, 0.6) : 0;
+          const headwardOverride = Math.min((headwardBoost - 1.0) * 0.4, 0.3);
+          mesaProtection = 1.0 - rawProtection * Math.max(0.2, 0.80 - convergenceOverride - headwardOverride);
+        }
+
+        // ── Two-regime erosion ──
+        let erosion: number;
+        if (isChannel) {
+          // FLUVIAL REGIME: full stream-power with channel intensity scaling
+          // More developed channels (higher intensity) erode faster
+          const fluvialK = erosionK * (1.0 + channelIntensity * 0.5);
+          erosion = fluvialK * R * mesaProtection * headwardBoost *
+            Math.pow(A, areaExponent) * Math.pow(S, slopeExponent);
+        } else {
+          // HILLSLOPE REGIME: weak erosion below channel threshold
+          // Still some incision from overland flow, but much weaker
+          const hillslopeK = erosionK * 0.15;
+          erosion = hillslopeK * R * mesaProtection *
+            Math.pow(A, areaExponent * 0.7) * Math.pow(S, slopeExponent * 1.3);
+        }
+        erosion = Math.min(erosion, maxErosion);
         const eroded = dt * erosion;
         grid[idx] -= eroded;
 
@@ -516,6 +690,92 @@ export function streamPowerErosion(
         grid[idx] += upliftRate;
       }
     }
+
+    // Step 3b: Lateral erosion / bank erosion / canyon widening (H2.2a)
+    // Multi-cell lateral reach: erode steep banks up to 3 cells perpendicular to flow.
+    // Uses bank SLOPE (not absolute height) as trigger — scale-independent.
+    // Stronger erosion near escarpment rims (high local relief).
+    {
+      const lateralRate = 0.35;       // H2.2b: stronger lateral erosion on strong regime
+      const bankSlopeThreshold = 0.5; // H2.2b: lower threshold to catch more banks
+      const minChannelArea = 20.0;    // H2.2b: lower threshold — more channels widen
+      const maxReach = 4;             // H2.2b: wider reach for broader canyon heads
+      const lateralBuf = new Float32Array(n);
+
+      for (let z = 3; z < h - 3; z++) {
+        for (let x = 3; x < w - 3; x++) {
+          const idx = z * w + x;
+          const A_here = area[idx];
+          if (A_here < minChannelArea) continue;
+
+          const hHere = grid[idx];
+
+          // Flow direction for perpendicular bank identification
+          const recv = receiver[idx];
+          if (recv < 0 || recv === idx) continue;
+          const rx = recv % w;
+          const rz = (recv - rx) / w;
+          const fdx = rx - x;
+          const fdz = rz - z;
+          const flen = Math.sqrt(fdx * fdx + fdz * fdz) || 1;
+          const px = -fdz / flen;
+          const pz = fdx / flen;
+
+          // Channel power scales with drainage area — stronger channels widen more
+          const channelPower = Math.min(4.0, Math.pow(A_here / 60.0, 0.4));
+
+          // Check both bank sides, multiple cells outward
+          for (const side of [-1, 1]) {
+            let prevH = hHere;
+            for (let reach = 1; reach <= maxReach; reach++) {
+              const bx = Math.round(x + px * side * reach);
+              const bz = Math.round(z + pz * side * reach);
+              if (bx < 1 || bx >= w - 1 || bz < 1 || bz >= h - 1) break;
+
+              const bankIdx = bz * w + bx;
+              const bankH = grid[bankIdx];
+
+              // Bank slope: height difference over one cell distance
+              const bankSlope = (bankH - prevH) / cellSize;
+
+              if (bankSlope < bankSlopeThreshold) break; // bank flattened, stop reaching
+
+              const R_bank = resistance ? resistance[bankIdx] : 1.0;
+
+              // Erosion decays with reach (closer to channel = more erosion)
+              const reachDecay = 1.0 / reach;
+
+              // Local relief amplification: steeper banks erode faster
+              const slopeExcess = bankSlope - bankSlopeThreshold;
+
+              const lateralErosion = Math.min(
+                slopeExcess * lateralRate * channelPower * R_bank * reachDecay * cellSize,
+                (bankH - hHere) * 0.35, // H2.2b: cap at 35% of total bank drop
+              );
+
+              if (lateralErosion > 0) {
+                lateralBuf[bankIdx] += lateralErosion;
+                // Bank debris partially becomes sediment
+                if (sedimentFlux) {
+                  sedimentFlux[idx] += lateralErosion * 0.25;
+                }
+              }
+
+              prevH = bankH;
+            }
+          }
+        }
+      }
+
+      // Apply lateral erosion
+      for (let i = 0; i < n; i++) {
+        if (lateralBuf[i] > 0) {
+          grid[i] -= lateralBuf[i];
+        }
+      }
+    }
+
+    // (H2.4 direct-incision seeding removed — replaced by proto-channel threshold modulation in H2.4a)
 
     // Step 4: Sediment transport and deposition
     // Route sediment downstream; deposit where transport capacity drops
