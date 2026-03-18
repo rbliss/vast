@@ -120,6 +120,38 @@ app.get('/api/screenshots', (req, res) => {
   res.json({ screenshots: files });
 });
 
+// List snapshots with metadata (for Reference Browser)
+app.get('/api/snapshots', (req, res) => {
+  const files = fs.readdirSync(VERIFICATION_DIR)
+    .filter(n => /\.(png|jpg|jpeg|webp)$/i.test(n))
+    .sort()
+    .reverse() // newest first
+    .map(name => {
+      const full = path.join(VERIFICATION_DIR, name);
+      const stat = fs.statSync(full);
+      const id = name.replace(/\.[^.]+$/, '');
+
+      // Try to load JSON sidecar
+      let metadata = null;
+      const jsonPath = path.join(VERIFICATION_DIR, id + '.json');
+      if (fs.existsSync(jsonPath)) {
+        try { metadata = JSON.parse(fs.readFileSync(jsonPath, 'utf8')); } catch {}
+      }
+
+      return {
+        id,
+        filename: name,
+        path: `/verification/${name}`,
+        metadataPath: metadata ? `/verification/${id}.json` : null,
+        size: stat.size,
+        timestamp: metadata?.timestamp || new Date(stat.mtimeMs).toISOString(),
+        label: id,
+        metadata,
+      };
+    });
+  res.json(files);
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[api] Screenshot API on http://0.0.0.0:${PORT}`);
   console.log(`[api] Screenshots → ${VERIFICATION_DIR}`);
