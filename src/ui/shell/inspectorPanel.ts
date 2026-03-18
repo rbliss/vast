@@ -51,6 +51,11 @@ export class InspectorPanel extends LitElement {
   @state() private _brushRadius = 20;
   @state() private _brushStrength = 10;
 
+  // Erosion (blank canvas)
+  @state() private _canvasErosionIter = 15;
+  @state() private _canvasErosionK = 0.006;
+  @state() private _erosionOpen = true;
+
   // Section collapse
   @state() private _sceneOpen = true;
   @state() private _terrainOpen = true;
@@ -169,11 +174,33 @@ export class InspectorPanel extends LitElement {
   render() {
     return html`
       ${this._renderBrush()}
+      ${this._renderErosion()}
       ${this._renderScene()}
       ${this._renderTerrain()}
       ${this._renderMaterials()}
       ${this._renderScatter()}
     `;
+  }
+
+  // ── Erosion (blank canvas) ──
+  private _renderErosion() {
+    return html`
+      <div class="section">
+        <div class="section-header" @click=${() => this._erosionOpen = !this._erosionOpen}>
+          <span class="arrow">${this._erosionOpen ? '▼' : '▶'}</span>
+          Erosion
+          <span class="class-tag tag-rebake">Apply</span>
+        </div>
+        ${this._erosionOpen ? html`<div class="section-body">
+          ${this._slider('Iterations', this._canvasErosionIter, 5, 40, 1, v => { this._canvasErosionIter = v; })}
+          ${this._slider('Strength', this._canvasErosionK, 0.001, 0.02, 0.001, v => { this._canvasErosionK = v; })}
+          <button class="rebake-btn" @click=${() => this._fire('apply-erosion', {
+            iterations: this._canvasErosionIter,
+            erosionStrength: this._canvasErosionK,
+          })}>Apply Erosion</button>
+          <div class="status-text">Runs stream-power + channels + hillslope on sculpted terrain. Undoable.</div>
+        </div>` : ''}
+      </div>`;
   }
 
   // ── Brush (blank canvas sculpt) ──

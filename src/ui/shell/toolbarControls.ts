@@ -78,6 +78,7 @@ export class ToolbarControls extends LitElement {
 
       <div class="separator"></div>
 
+      <button @click=${() => this._emit('apply-erosion')} style="background:rgba(140,100,60,0.8);color:#fff;">Erode</button>
       <button @click=${() => this._emit('blank-canvas')}>Blank Canvas</button>
       <button @click=${() => this._emit('test-environment')}>Test Environment</button>
       <button @click=${() => this._emit('reset-canvas')}>Reset Canvas</button>

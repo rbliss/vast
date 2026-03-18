@@ -344,6 +344,18 @@ shell.addEventListener('reset-canvas', () => {
   app.resetCanvas();
 });
 
+shell.addEventListener('apply-erosion', ((e: CustomEvent) => {
+  if (!app.isEditable) return;
+  shell.statusText = 'Eroding terrain...';
+  // Run async to let UI update
+  setTimeout(() => {
+    const opts = e?.detail ?? {};
+    app.applyErosion(opts);
+    shell.statusText = 'Erosion applied (Cmd+Z to undo)';
+    setTimeout(() => { shell.statusText = runtimeStore.statusLine; }, 3000);
+  }, 50);
+}) as EventListener);
+
 // ── Save / Open / Autosave ──
 shell.addEventListener('save-project', (async () => {
   if (!isTestEnv) {

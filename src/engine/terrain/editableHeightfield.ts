@@ -43,6 +43,8 @@ export class EditableHeightfield implements TerrainSource {
   get gridSize() { return this._gridSize; }
   get extent() { return this._extent; }
   get cellSize() { return this._cellSize; }
+  /** Direct access to the height grid for erosion passes */
+  get grid() { return this._grid; }
 
   /** Sample height at world position via bilinear interpolation */
   sampleHeight(x: number, z: number): number {

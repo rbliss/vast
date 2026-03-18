@@ -12,6 +12,10 @@ import type { RendererBackend, RendererLike } from './backend/types';
 import type { TerrainSource } from './terrain/terrainSource';
 import type { TerrainSourceResult } from './terrain/terrainSource';
 import { EditableHeightfield, type BrushStamp } from './terrain/editableHeightfield';
+import { streamPowerErosion, DEFAULT_STREAM_POWER } from './terrain/streamPower';
+import { applyChannelGeometry } from './terrain/channelGeometry';
+import { applyHillslopeTransport } from './terrain/hillslopeTransport';
+import { generateResistanceGrid } from './terrain/resistanceField';
 import type { ScatterParams } from './foliage/foliageSystem';
 import type { WorldDocument } from './document';
 import type { TerrainBakeArtifacts } from './bake/types';
@@ -477,6 +481,73 @@ export class TerrainApp {
 
   beginStroke(): void { this._editableHF?.beginStroke(); }
   endStroke(): void { this._editableHF?.endStroke(); }
+
+  /** Apply erosion pipeline to the sculpted heightfield */
+  applyErosion(opts: {
+    iterations?: number;
+    erosionStrength?: number;
+    channelGeometry?: boolean;
+    hillslope?: boolean;
+    resistance?: boolean;
+  } = {}): void {
+    if (!this._editableHF) return;
+
+    const hf = this._editableHF;
+    const grid = hf.grid;
+    const n = hf.gridSize;
+    const cs = hf.cellSize;
+    const extent = hf.extent;
+
+    // Save undo state (one entry for the whole erosion pass)
+    hf.beginStroke();
+
+    const t0 = performance.now();
+
+    // Build erosion params from defaults + overrides
+    const spParams = {
+      ...DEFAULT_STREAM_POWER,
+      iterations: opts.iterations ?? 15,
+      erosionK: opts.erosionStrength ?? 0.006,
+    };
+
+    // Resistance field
+    const resistanceGen = opts.resistance !== false
+      ? (heights: Float32Array) => generateResistanceGrid(heights, n, n, extent, cs)
+      : undefined;
+
+    // Stream-power erosion
+    const spResult = streamPowerErosion(grid, n, n, cs, spParams, resistanceGen);
+    console.log(`[erosion] stream-power: ${spParams.iterations} iterations`);
+
+    // Channel geometry
+    if (opts.channelGeometry !== false) {
+      const chanResistance = opts.resistance !== false
+        ? generateResistanceGrid(grid, n, n, extent, cs)
+        : undefined;
+      applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cs, undefined, chanResistance);
+      console.log(`[erosion] channel geometry`);
+    }
+
+    // Hillslope transport
+    if (opts.hillslope !== false) {
+      const hillResistance = opts.resistance !== false
+        ? generateResistanceGrid(grid, n, n, extent, cs)
+        : undefined;
+      applyHillslopeTransport(grid, n, n, cs, undefined, hillResistance);
+      console.log(`[erosion] hillslope transport`);
+    }
+
+    const elapsed = performance.now() - t0;
+    console.log(`[erosion] applied in ${elapsed.toFixed(0)}ms`);
+
+    // Commit to undo (one entry)
+    hf.endStroke();
+
+    // Force rebuild all chunks
+    this.centerCX = Infinity;
+    this.centerCZ = Infinity;
+    this.updateChunks();
+  }
 
   /** Apply a brush stamp and rebuild affected chunks */
   applyBrushStamp(stamp: BrushStamp): void {
