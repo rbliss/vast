@@ -6,19 +6,52 @@
  *   POST /api/screenshot   — upload base64 PNG/JPEG, save to verification/ (legacy)
  *   GET  /api/screenshots  — list saved screenshots
  *   GET  /verification/*   — serve saved files (images + JSON sidecars)
+ *   GET  /verification/thumbs/* — on-demand thumbnail generation (360px wide JPEG)
  */
 
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const sharp = require('sharp');
 
 const PORT = parseInt(process.env.PORT || '8081', 10);
 const VERIFICATION_DIR = path.join(__dirname, 'verification');
+const THUMBS_DIR = path.join(VERIFICATION_DIR, 'thumbs');
 
 fs.mkdirSync(VERIFICATION_DIR, { recursive: true });
+fs.mkdirSync(THUMBS_DIR, { recursive: true });
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
+
+// On-demand thumbnail generation (cached)
+app.get('/verification/thumbs/:filename', async (req, res) => {
+  const { filename } = req.params;
+  const thumbPath = path.join(THUMBS_DIR, filename.replace(/\.[^.]+$/, '.jpg'));
+  const srcPath = path.join(VERIFICATION_DIR, filename);
+
+  // Serve cached thumbnail
+  if (fs.existsSync(thumbPath)) {
+    return res.sendFile(thumbPath);
+  }
+
+  // Generate from source
+  if (!fs.existsSync(srcPath)) {
+    return res.status(404).json({ error: 'Source image not found' });
+  }
+
+  try {
+    await sharp(srcPath)
+      .resize(360, null, { withoutEnlargement: true })
+      .jpeg({ quality: 75 })
+      .toFile(thumbPath);
+    res.sendFile(thumbPath);
+  } catch (e) {
+    console.warn(`[thumbs] failed to generate thumbnail for ${filename}:`, e.message);
+    // Fall back to original
+    res.sendFile(srcPath);
+  }
+});
 
 // Serve saved screenshots
 app.use('/verification', express.static(VERIFICATION_DIR));
@@ -142,6 +175,7 @@ app.get('/api/snapshots', (req, res) => {
         id,
         filename: name,
         path: `/verification/${name}`,
+        thumbPath: `/verification/thumbs/${name}`,
         metadataPath: metadata ? `/verification/${id}.json` : null,
         size: stat.size,
         timestamp: metadata?.timestamp || new Date(stat.mtimeMs).toISOString(),

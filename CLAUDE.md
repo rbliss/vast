@@ -58,12 +58,12 @@ High-quality procedural terrain generation running purely in the browser with Th
 - `vast-vite.service` — Vite dev server (systemd)
 - `vast-api.service` — Express API server (systemd)
 
-## Browser verification
-- URL: `https://beyond-all-reason:8080`
-- Always verify rendering changes visually in Chrome
-- Use `window.__snapshot()` for programmatic snapshot capture
 
 ## Workflow
 - Codex communicates plans and designs to @claude in Duet for implementation
+- All work MUST be verified in the Chrome browser before it is considered complete
+- Visual changes MUST include browser screenshots provided to claude as proof of verification
+- URL: `https://beyond-all-reason:8080` (references: `/references.html`)
+- Use `window.__snapshot()` for programmatic snapshot capture
 - Upon completing work, notify @codex with a summary for confirmation
 - Once approved by @codex, commit and push the changes

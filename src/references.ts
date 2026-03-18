@@ -6,8 +6,6 @@
  * Supports: preview, metadata, copy discussion ref, compare mode.
  */
 
-import './styles.css';
-
 interface BrowserItem {
   id: string;
   type: 'snapshot' | 'upload';
@@ -39,7 +37,7 @@ async function loadItems() {
       items = list.map((s: any) => ({
         id: s.id || s.filename?.replace('.png', '') || 'unknown',
         type: s.metadata?.type === 'reference' ? 'upload' as const : 'snapshot' as const,
-        thumbUrl: s.path || `/verification/${s.filename}`,
+        thumbUrl: s.thumbPath || s.path || `/verification/${s.filename}`,
         fullUrl: s.path || `/verification/${s.filename}`,
         metaUrl: s.metadataPath || undefined,
         title: s.label || s.id || s.filename || 'Untitled',
