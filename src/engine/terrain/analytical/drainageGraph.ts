@@ -241,15 +241,11 @@ export function generateGuidanceFields(
   const valleyWidth = new Float32Array(n);
   const valleyDepth = new Float32Array(n);
 
-  // AE2.2: Distance-field rasterization
-  // Step 1: For each cell, find its nearest point on any graph edge.
-  //         Record distance, nearest edge's area, and hierarchy level.
-  // Step 2: Derive valley profile from the distance field.
-  // This replaces per-step stamping and produces smooth, continuous valleys.
+  // AE2.4: Continuous network-wide field construction
+  // Walk each edge path and paint smooth valley corridors into the raster fields.
+  // Width/depth are regularized along each path (monotone widening downstream).
+  // Contributions accumulate via smooth-max, not nearest-segment switching.
 
-  // Build edge segments from smoothed polyline paths
-  interface EdgeSeg { x1: number; z1: number; x2: number; z2: number; area: number; level: number; }
-  const segments: EdgeSeg[] = [];
   for (const edge of graph.edges) {
     const src = graph.nodes[edge.from];
     const dst = graph.nodes[edge.to];
@@ -257,115 +253,56 @@ export function generateGuidanceFields(
     const nPts = path.length / 2;
     if (nPts < 2) continue;
 
-    // Create segments along the smoothed polyline
-    // Subsample long paths to keep segment count manageable
-    const step = Math.max(1, Math.floor(nPts / 20));
-    for (let p = 0; p < nPts - step; p += step) {
-      const p2 = Math.min(p + step, nPts - 1);
-      const t = (p + p2) / 2 / Math.max(1, nPts - 1);
-      segments.push({
-        x1: path[p * 2], z1: path[p * 2 + 1],
-        x2: path[p2 * 2], z2: path[p2 * 2 + 1],
-        area: src.area + (dst.area - src.area) * t,
-        level: edge.level,
-      });
-    }
-  }
+    const levelScale = edge.level <= 1 ? 1.0 : edge.level === 2 ? 0.55 : 0.25;
 
-  // Build spatial grid for fast segment lookup
-  const bucketSize = 16; // cells per bucket
-  const bw = Math.ceil(w / bucketSize), bh = Math.ceil(h / bucketSize);
-  const buckets: number[][] = new Array(bw * bh);
-  for (let i = 0; i < buckets.length; i++) buckets[i] = [];
+    // Walk along the smoothed path, painting corridor at each sample point
+    const sampleStep = Math.max(1, Math.floor(nPts / 40)); // ~40 samples per edge max
+    for (let p = 0; p < nPts; p += sampleStep) {
+      const px = path[p * 2], pz = path[p * 2 + 1];
+      const t = p / Math.max(1, nPts - 1); // 0 at src, 1 at dst
 
-  const maxSearchDist = 12; // cells — max valley half-width
-  for (let si = 0; si < segments.length; si++) {
-    const seg = segments[si];
-    const minBX = Math.max(0, Math.floor((Math.min(seg.x1, seg.x2) - maxSearchDist) / bucketSize));
-    const maxBX = Math.min(bw - 1, Math.floor((Math.max(seg.x1, seg.x2) + maxSearchDist) / bucketSize));
-    const minBZ = Math.max(0, Math.floor((Math.min(seg.z1, seg.z2) - maxSearchDist) / bucketSize));
-    const maxBZ = Math.min(bh - 1, Math.floor((Math.max(seg.z1, seg.z2) + maxSearchDist) / bucketSize));
-    for (let bz = minBZ; bz <= maxBZ; bz++) {
-      for (let bx = minBX; bx <= maxBX; bx++) {
-        buckets[bz * bw + bx].push(si);
-      }
-    }
-  }
+      // Interpolate area along path (monotone: always use max of src/dst)
+      const pArea = src.area + (dst.area - src.area) * t;
+      const effectiveArea = Math.max(pArea, src.area * 0.5); // never drop below half src area
 
-  // For each raster cell, find nearest segments and blend valleys smoothly
-  for (let z = 0; z < h; z++) {
-    for (let x = 0; x < w; x++) {
-      const idx = z * w + x;
-      const bx = Math.floor(x / bucketSize), bz = Math.floor(z / bucketSize);
-      const bucket = buckets[bz * bw + bx];
+      // Width/depth from area — smooth, continuous
+      const halfWidth = Math.min(8, 1.2 + Math.pow(effectiveArea / 800, 0.25) * 2) * cellSize;
+      const maxDepth = Math.min(25, 1.5 + Math.pow(effectiveArea / 400, 0.35) * 4) * levelScale;
 
-      // Collect top-2 nearest segments for smooth junction blending
-      let dist1 = Infinity, area1 = 0, level1 = 3;
-      let dist2 = Infinity, area2 = 0, level2 = 3;
+      // Paint into raster within the corridor radius
+      const radiusCells = Math.ceil(halfWidth / cellSize) + 1;
+      const cx = Math.round(px), cz = Math.round(pz);
 
-      for (const si of bucket) {
-        const seg = segments[si];
-        const sdx = seg.x2 - seg.x1, sdz = seg.z2 - seg.z1;
-        const len2 = sdx * sdx + sdz * sdz;
-        let t = len2 > 0 ? ((x - seg.x1) * sdx + (z - seg.z1) * sdz) / len2 : 0;
-        t = Math.max(0, Math.min(1, t));
-        const px = seg.x1 + sdx * t, pz = seg.z1 + sdz * t;
-        const dist = Math.sqrt((x - px) * (x - px) + (z - pz) * (z - pz)) * cellSize;
+      for (let dz = -radiusCells; dz <= radiusCells; dz++) {
+        for (let dx = -radiusCells; dx <= radiusCells; dx++) {
+          const nx = cx + dx, nz = cz + dz;
+          if (nx < 0 || nx >= w || nz < 0 || nz >= h) continue;
 
-        if (dist < dist1) {
-          dist2 = dist1; area2 = area1; level2 = level1;
-          dist1 = dist; area1 = seg.area; level1 = seg.level;
-        } else if (dist < dist2) {
-          dist2 = dist; area2 = seg.area; level2 = seg.level;
-        }
-      }
+          const dist = Math.sqrt(dx * dx + dz * dz) * cellSize;
+          if (dist >= halfWidth) continue;
 
-      distToChannel[idx] = dist1;
+          const ni = nz * w + nx;
+          const dt = dist / halfWidth;
+          // Smooth valley cross-section
+          const profile = 1 - dt * dt * (3 - 2 * dt); // smoothstep
+          const depthHere = maxDepth * profile;
+          const strengthHere = profile * levelScale;
 
-      // Compute valley profile for nearest channel
-      const width1 = Math.min(10, 1.5 + Math.pow(area1 / 1000, 0.25) * 2.5) * cellSize;
-      const depth1Raw = Math.min(30, 2 + Math.pow(area1 / 500, 0.35) * 5);
-      const levelScale1 = level1 <= 1 ? 1.0 : level1 === 2 ? 0.55 : 0.25;
-
-      if (dist1 >= width1) continue; // outside any valley
-
-      const t1 = dist1 / width1;
-      const profile1 = 1 - t1 * t1 * (3 - 2 * t1); // smoothstep
-      let strength = profile1 * levelScale1;
-      let depth = depth1Raw * profile1 * levelScale1;
-      let vWidth = width1;
-
-      // Smooth junction blending: if second-nearest channel is also close,
-      // blend the two valley contributions using exponential soft-min
-      if (dist2 < Infinity) {
-        const width2 = Math.min(10, 1.5 + Math.pow(area2 / 1000, 0.25) * 2.5) * cellSize;
-        if (dist2 < width2 * 1.5) {
-          const depth2Raw = Math.min(30, 2 + Math.pow(area2 / 500, 0.35) * 5);
-          const levelScale2 = level2 <= 1 ? 1.0 : level2 === 2 ? 0.55 : 0.25;
-          const t2 = dist2 / width2;
-          const profile2 = Math.max(0, 1 - t2 * t2 * (3 - 2 * t2));
-          const strength2 = profile2 * levelScale2;
-          const depth2 = depth2Raw * profile2 * levelScale2;
-
-          // Smooth union: take the deeper valley, blend where they overlap
-          if (depth2 > depth) {
-            // Second channel dominates here
-            const blend = Math.min(1, (dist1 - dist2 + 2) / 4); // smooth transition zone
-            strength = strength * (1 - blend) + strength2 * blend;
-            depth = depth * (1 - blend) + depth2 * blend;
-            vWidth = vWidth * (1 - blend) + width2 * blend;
-          } else if (strength2 > 0.05) {
-            // First dominates but add a bit of the second for smooth merge
-            const additive = strength2 * 0.3;
-            strength = Math.min(1, strength + additive);
-            depth = depth + depth2 * 0.2;
+          // Smooth-max accumulation: keep the deepest/strongest contribution
+          // This naturally handles junctions — overlapping valleys merge smoothly
+          if (depthHere > valleyDepth[ni]) {
+            valleyDepth[ni] = depthHere;
+            channelStrength[ni] = strengthHere;
+            valleyWidth[ni] = halfWidth;
+          } else if (depthHere > valleyDepth[ni] * 0.5) {
+            // Additive blending for nearby overlapping valleys
+            valleyDepth[ni] = valleyDepth[ni] * 0.7 + depthHere * 0.3;
+            channelStrength[ni] = Math.min(1, channelStrength[ni] + strengthHere * 0.2);
           }
+
+          if (dist < distToChannel[ni]) distToChannel[ni] = dist;
         }
       }
-
-      channelStrength[idx] = strength;
-      valleyWidth[idx] = vWidth;
-      valleyDepth[idx] = depth;
     }
   }
 
