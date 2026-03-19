@@ -463,12 +463,21 @@ export interface StreamPowerResult {
  */
 export type ResistanceGenerator = (heights: Float32Array) => Float32Array;
 
+/** AE3 guidance fields for persistent H2 integration */
+export interface AE3Guidance {
+  channelStrength: Float32Array;  // [0,1] trunk/tributary strength
+  distToChannel: Float32Array;    // world-space distance to nearest channel
+  valleyWidth: Float32Array;      // target valley half-width
+  valleyDepth: Float32Array;      // target valley depth
+}
+
 export function streamPowerErosion(
   grid: Float32Array, w: number, h: number,
   cellSize: number, params: StreamPowerParams,
   resistanceGen?: ResistanceGenerator,
   onProgress?: (iteration: number) => void,
   aeChannelStrength?: Float32Array,
+  aeGuidance?: AE3Guidance,
 ): StreamPowerResult {
   const { iterations, erosionK, areaExponent, slopeExponent, dt,
           diffusionRate, minSlope, upliftRate, maxErosion,
@@ -490,13 +499,16 @@ export function streamPowerErosion(
   // Used to modulate channel-initiation threshold — NOT direct carving.
   const protoChannel = new Float32Array(n);
 
-  // AE3: Seed proto-channel field from analytical graph guidance
-  // This gives the iterative bake a strong drainage backbone to work from
-  if (aeChannelStrength) {
-    for (let i = 0; i < n; i++) {
-      protoChannel[i] = aeChannelStrength[i] * 0.8; // strong initial seed
-    }
-    console.log(`[stream-power] AE3: proto-channel field seeded from analytical guidance`);
+  // AE3.2: Use combined guidance if available, fall back to legacy channelStrength
+  const guidance = aeGuidance ?? (aeChannelStrength ? {
+    channelStrength: aeChannelStrength,
+    distToChannel: new Float32Array(n).fill(Infinity),
+    valleyWidth: new Float32Array(n),
+    valleyDepth: new Float32Array(n),
+  } : null);
+
+  if (guidance) {
+    console.log(`[stream-power] AE3.2: persistent multi-field guidance active`);
   }
 
   for (let iter = 0; iter < iterations; iter++) {
@@ -540,6 +552,16 @@ export function streamPowerErosion(
       // Decay existing field
       for (let i = 0; i < n; i++) {
         protoChannel[i] *= decayRate;
+      }
+
+      // AE3.2: Persistent guidance reinforcement — use AE as a floor
+      // After decay, ensure proto-channel never drops below AE guidance level
+      // This keeps the analytical drainage backbone active throughout all iterations
+      if (guidance) {
+        for (let i = 0; i < n; i++) {
+          const aeFloor = guidance.channelStrength[i] * 0.7;
+          if (protoChannel[i] < aeFloor) protoChannel[i] = aeFloor;
+        }
       }
 
       for (let z = 5; z < h - 5; z++) {
@@ -738,10 +760,10 @@ export function streamPowerErosion(
     // Uses bank SLOPE (not absolute height) as trigger — scale-independent.
     // Stronger erosion near escarpment rims (high local relief).
     {
-      const lateralRate = 0.35;       // H2.2b: stronger lateral erosion on strong regime
-      const bankSlopeThreshold = 0.5; // H2.2b: lower threshold to catch more banks
-      const minChannelArea = 20.0;    // H2.2b: lower threshold — more channels widen
-      const maxReach = 4;             // H2.2b: wider reach for broader canyon heads
+      let lateralRate = 0.35;
+      let bankSlopeThreshold = 0.5;
+      const minChannelArea = 20.0;
+      let maxReach = 4;
       const lateralBuf = new Float32Array(n);
 
       for (let z = 3; z < h - 3; z++) {
@@ -764,7 +786,11 @@ export function streamPowerErosion(
           const pz = fdx / flen;
 
           // Channel power scales with drainage area — stronger channels widen more
-          const channelPower = Math.min(4.0, Math.pow(A_here / 60.0, 0.4));
+          // AE3.2: Boost lateral erosion near AE-guided trunk corridors
+          let channelPower = Math.min(4.0, Math.pow(A_here / 60.0, 0.4));
+          if (guidance && guidance.channelStrength[idx] > 0.1) {
+            channelPower *= 1.0 + guidance.channelStrength[idx] * 1.5; // up to 2.5x boost
+          }
 
           // Check both bank sides, multiple cells outward
           for (const side of [-1, 1]) {

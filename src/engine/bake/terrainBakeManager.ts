@@ -154,9 +154,17 @@ function runBakeInWorker(
       transfer.push(gridCopy.buffer);
     }
     if (aeChannelStrength) {
-      const guidanceCopy = new Float32Array(aeChannelStrength);
-      workerMsg.aeChannelStrength = guidanceCopy;
-      transfer.push(guidanceCopy.buffer);
+      const csCopy = new Float32Array(aeChannelStrength);
+      workerMsg.aeChannelStrength = csCopy;
+      transfer.push(csCopy.buffer);
+      // Full guidance fields passed via window global if available
+      const fullGuidance = typeof globalThis !== 'undefined' && (globalThis as any).__aeFullGuidance;
+      if (fullGuidance) {
+        workerMsg.aeDistToChannel = new Float32Array(fullGuidance.distToChannel);
+        workerMsg.aeValleyWidth = new Float32Array(fullGuidance.valleyWidth);
+        workerMsg.aeValleyDepth = new Float32Array(fullGuidance.valleyDepth);
+        transfer.push(workerMsg.aeDistToChannel.buffer, workerMsg.aeValleyWidth.buffer, workerMsg.aeValleyDepth.buffer);
+      }
     }
     worker.postMessage(workerMsg, { transfer });
     console.log('[bake] dispatched to worker');

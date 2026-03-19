@@ -146,6 +146,7 @@ if (isTestEnv) {
 
   // Store guidance fields for H2 bake integration
   (window as any).__aeGuidance = prepassGuidance;
+  if (prepassGuidance) (window as any).__aeFullGuidance = prepassGuidance;
 
   // Prepass-only mode: use the prepass result directly as terrain source (no full bake)
   // The prepass modifies benchHF.grid in place — use it as the terrain source

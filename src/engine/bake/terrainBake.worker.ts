@@ -31,9 +31,9 @@ self.onmessage = (e: MessageEvent) => {
       const aeGuidance: AEGuidanceFields | undefined = msg.aeChannelStrength
         ? {
             channelStrength: msg.aeChannelStrength,
-            distToChannel: new Float32Array(0),
-            valleyWidth: new Float32Array(0),
-            valleyDepth: new Float32Array(0),
+            distToChannel: msg.aeDistToChannel ?? new Float32Array(0),
+            valleyWidth: msg.aeValleyWidth ?? new Float32Array(0),
+            valleyDepth: msg.aeValleyDepth ?? new Float32Array(0),
           }
         : undefined;
 

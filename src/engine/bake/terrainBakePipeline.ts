@@ -103,7 +103,12 @@ export function executeBake(
   let tStreamPower = 0;
   if (erosion.streamPower.enabled) {
     const t = performance.now();
-    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower, resistanceGen, undefined, aeGuidance?.channelStrength);
+    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower, resistanceGen, undefined, undefined, aeGuidance ? {
+      channelStrength: aeGuidance.channelStrength,
+      distToChannel: aeGuidance.distToChannel,
+      valleyWidth: aeGuidance.valleyWidth,
+      valleyDepth: aeGuidance.valleyDepth,
+    } : undefined);
     tStreamPower = performance.now() - t;
     console.log(`[bake] stream-power: ${erosion.streamPower.iterations} iterations (${tStreamPower.toFixed(0)}ms)`);
   }
