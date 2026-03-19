@@ -426,7 +426,17 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
       const { MACRO_PRESETS } = await import('./engine/terrain/macroTerrain');
       const { domainFromBakeMetadata } = await import('./engine/bake/terrainDomain');
 
-      const benchHF = createReferenceBenchmarkHeightfield();
+      // Recreate the same terrain that was loaded at startup (micro or full benchmark)
+      let benchHF: import('./engine/terrain/editableHeightfield').EditableHeightfield;
+      const mn = (window as any).__microName;
+      if (mn) {
+        const { getMicroBenchmark } = await import('./engine/terrain/microBenchmarks');
+        const micro = getMicroBenchmark(mn);
+        if (!micro) throw new Error(`Unknown micro: ${mn}`);
+        benchHF = micro.heightfield;
+      } else {
+        benchHF = createReferenceBenchmarkHeightfield();
+      }
 
       // Run analytical prepass before full bake
       const { DEFAULT_ANALYTICAL_PREPASS } = await import('./engine/terrain/analytical/types');
@@ -436,13 +446,21 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
       if ((window as any).__ae3NoPrepass) rebakePrepassCfg.blendStrength = 0;
       const rebakePrepass = runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, rebakePrepassCfg);
 
+      // Adjust erosion config for micro cases (different grid size/extent)
       const erosionCfg = {
         ...BENCHMARK_EROSION,
+        gridSize: benchHF.gridSize,
+        extent: benchHF.extent,
         streamPower: {
           ...BENCHMARK_EROSION.streamPower,
           iterations,
           erosionK: opts.erosionStrength ?? BENCHMARK_EROSION.streamPower.erosionK,
         },
+        // Micro isolation: disable non-essential post-passes for cleaner feature proofing
+        ...(mn ? {
+          fan: { ...BENCHMARK_EROSION.fan, enabled: false },
+          thermal: { ...BENCHMARK_EROSION.thermal, enabled: false },
+        } : {}),
       };
 
       const artifacts = await runBake(
