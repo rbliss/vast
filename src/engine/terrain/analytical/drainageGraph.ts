@@ -78,16 +78,44 @@ export function extractDrainageGraph(
   primaryThreshold: number,
 ): DrainageGraph {
   const n = w * h;
-  const secondaryThreshold = primaryThreshold * 0.08;
-  const headwaterThreshold = primaryThreshold * 0.04; // not too low — prevents node explosion
+  const secondaryThreshold = primaryThreshold * 0.3;
 
-  // Step 1: Identify all channel cells (above headwater threshold)
-  const isChannel = new Uint8Array(n);
+  // Step 1: Build sparse channel network using receiver convergence
+  // Count how many cells drain INTO each cell via the primary receiver tree
+  // Cells with multiple incoming receivers are junction/channel cells
+  const incomingCount = new Uint16Array(n);
   for (let i = 0; i < n; i++) {
-    if (area[i] > headwaterThreshold) isChannel[i] = 1;
+    if (receiver[i] !== i) incomingCount[receiver[i]]++;
   }
 
-  // Step 2: Build graph nodes from channel cells
+  // Channel cells: have ≥2 incoming receivers (convergence points)
+  // OR have area above primary threshold (trunk channels)
+  // Walk downstream from convergence points to mark trunk paths
+  const isChannel = new Uint8Array(n);
+  let channelCellCount = 0;
+  for (let i = 0; i < n; i++) {
+    if (area[i] > primaryThreshold || incomingCount[i] >= 2) {
+      // Mark this cell and walk downstream to outlet
+      let cur = i;
+      let steps = w + h;
+      while (cur >= 0 && cur < n && !isChannel[cur] && steps-- > 0) {
+        if (area[cur] > secondaryThreshold) {
+          isChannel[cur] = 1;
+          channelCellCount++;
+        }
+        if (receiver[cur] === cur) break;
+        cur = receiver[cur];
+      }
+    }
+  }
+
+  // Subsample: only every Nth channel cell becomes a graph node
+  // This creates edges long enough for polyline smoothing to work
+  const nodeSpacing = Math.max(3, Math.floor(Math.sqrt(channelCellCount / 1500)));
+  let nodeCounter = 0;
+
+  // Step 2: Build sparse graph nodes — subsample channel cells
+  // Keep: outlets, junctions (≥2 incoming), and every Nth cell along channels
   const nodes: DrainageNode[] = [];
   const gridToNode = new Int32Array(n).fill(-1);
 
@@ -96,23 +124,25 @@ export function extractDrainageGraph(
       const idx = z * w + x;
       if (!isChannel[idx]) continue;
 
-      // Determine hierarchy level
+      const isOutlet = receiver[idx] === idx;
+      const isJunction = incomingCount[idx] >= 2;
+      const isPrimary = area[idx] > primaryThreshold;
+
+      // Always keep outlets, junctions, and primary trunk cells
+      // Subsample other channel cells
+      const keep = isOutlet || isJunction || isPrimary || (nodeCounter++ % nodeSpacing === 0);
+      if (!keep) continue;
+
       let level: number;
-      if (receiver[idx] === idx) {
-        level = 0; // outlet
-      } else if (area[idx] > primaryThreshold) {
-        level = 1; // primary trunk
-      } else if (area[idx] > secondaryThreshold) {
-        level = 2; // secondary tributary
-      } else {
-        level = 3; // headwater
-      }
+      if (isOutlet) level = 0;
+      else if (isPrimary) level = 1;
+      else if (area[idx] > secondaryThreshold) level = 2;
+      else level = 3;
 
       const nodeIdx = nodes.length;
       gridToNode[idx] = nodeIdx;
       nodes.push({
-        idx,
-        x, z,
+        idx, x, z,
         area: area[idx],
         level,
         downstream: -1,
@@ -120,6 +150,8 @@ export function extractDrainageGraph(
       });
     }
   }
+
+  console.log(`[graph] channel cells: ${channelCellCount}, nodes after subsample: ${nodes.length} (spacing=${nodeSpacing})`);
 
   // Step 3: Build edges by following receiver links between graph nodes
   const edges: DrainageEdge[] = [];
@@ -176,7 +208,7 @@ export function extractDrainageGraph(
     if (node.level === 0) basinCount++;
   }
 
-  console.log(`[graph] extracted: ${nodes.length} nodes, ${edges.length} edges, ${basinCount} basins (primary>${primaryThreshold.toFixed(0)} secondary>${secondaryThreshold.toFixed(0)} headwater>${headwaterThreshold.toFixed(0)})`);
+  console.log(`[graph] extracted: ${nodes.length} nodes, ${edges.length} edges, ${basinCount} basins (primary>${primaryThreshold.toFixed(0)} secondary>${secondaryThreshold.toFixed(0)})`);
 
   return { nodes, edges, gridToNode, basinCount, gridSize: w, cellSize };
 }
