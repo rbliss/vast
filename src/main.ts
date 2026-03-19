@@ -814,9 +814,12 @@ if (isBenchmark) {
     const wasClay = app.isClayMode();
     if (!wasClay) app.setClayMode(true);
 
+    const captureT0 = performance.now();
     console.log(`[benchmark] capturing ${BENCHMARK_CAMERAS.length} views (${stage})`);
 
-    for (const cam of BENCHMARK_CAMERAS) {
+    for (let ci = 0; ci < BENCHMARK_CAMERAS.length; ci++) {
+      const viewT0 = performance.now();
+      const cam = BENCHMARK_CAMERAS[ci];
       const ch = terrainSource.sampleHeight(cam.camX, cam.camZ);
       const th = terrainSource.sampleHeight(cam.tgtX, cam.tgtZ);
       app.camera.position.set(cam.camX, ch + cam.clearance, cam.camZ);
@@ -851,7 +854,8 @@ if (isBenchmark) {
         });
         if (resp.ok) {
           const result = await resp.json();
-          console.log(`[benchmark] ${cam.name} (${stage}): ${result.id}`);
+          const viewMs = performance.now() - viewT0;
+          console.log(`[benchmark] ${cam.name} (${stage}): ${result.id} [${viewMs.toFixed(0)}ms]`);
         }
       } catch (err) {
         console.error(`[benchmark] ${cam.name} failed:`, err);
@@ -859,20 +863,26 @@ if (isBenchmark) {
     }
 
     if (!wasClay) app.setClayMode(false);
-    console.log(`[benchmark] capture complete (${stage})`);
+    const captureMs = performance.now() - captureT0;
+    console.log(`[benchmark] capture complete (${stage}) — ${BENCHMARK_CAMERAS.length} views in ${captureMs.toFixed(0)}ms`);
   };
 
   // Auto-capture on load: ?capture=label triggers fast benchmark capture
   const captureLabel = params.get('capture');
   if (captureLabel) {
     (async () => {
+      const t0 = performance.now();
       console.log(`[auto-capture] waiting for initial render...`);
       await new Promise(r => setTimeout(r, 1500));
       app.update();
-      console.log(`[auto-capture] triggering capture: ${captureLabel}`);
+      const tRender = performance.now() - t0;
+      console.log(`[auto-capture] render stabilized (${tRender.toFixed(0)}ms), triggering capture: ${captureLabel}`);
+      const tCapture0 = performance.now();
       await (window as any).__benchmarkCapture(captureLabel);
-      console.log(`[auto-capture] done`);
-      document.title = `VAST — Captured: ${captureLabel}`;
+      const tCapture = performance.now() - tCapture0;
+      const tTotal = performance.now() - t0;
+      console.log(`[auto-capture] done — capture: ${tCapture.toFixed(0)}ms, total: ${tTotal.toFixed(0)}ms`);
+      document.title = `VAST — Captured: ${captureLabel} (${(tTotal/1000).toFixed(1)}s)`;
     })();
   }
 
