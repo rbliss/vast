@@ -176,5 +176,18 @@ function runBakeInWorker(
  */
 function runBakeOnMainThread(request: TerrainBakeRequest, preSampledGrid?: Float32Array, onStageCapture?: StageCaptureHandler, aeChannelStrength?: Float32Array): TerrainBakeArtifacts {
   console.log('[bake] running on main thread (fallback)');
-  return executeBake(request, preSampledGrid, onStageCapture, aeChannelStrength ? { channelStrength: aeChannelStrength, distToChannel: new Float32Array(0), valleyWidth: new Float32Array(0), valleyDepth: new Float32Array(0) } : undefined);
+  // Use full guidance from window global if available
+  const fullGuidance = typeof globalThis !== 'undefined' && (globalThis as any).__aeFullGuidance;
+  const aeGuidance = fullGuidance ? {
+    channelStrength: fullGuidance.channelStrength,
+    distToChannel: fullGuidance.distToChannel,
+    valleyWidth: fullGuidance.valleyWidth,
+    valleyDepth: fullGuidance.valleyDepth,
+  } : (aeChannelStrength ? {
+    channelStrength: aeChannelStrength,
+    distToChannel: new Float32Array(0),
+    valleyWidth: new Float32Array(0),
+    valleyDepth: new Float32Array(0),
+  } : undefined);
+  return executeBake(request, preSampledGrid, onStageCapture, aeGuidance);
 }

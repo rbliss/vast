@@ -120,10 +120,22 @@ if (isTestEnv) {
   bakeArtifacts = result.bakeArtifacts;
   terrainDomain = result.domain;
 } else if (isBenchmark) {
-  // Reference benchmark: deterministic heightfield → full production bake pipeline
-  setStartupStatus('Generating benchmark terrain...');
-  const { createReferenceBenchmarkHeightfield } = await import('./engine/terrain/benchmarkHeightfield');
-  const benchHF = createReferenceBenchmarkHeightfield();
+  // Check for micro-benchmark mode: ?micro=single-notch|double-notch|bowl-outlet|trunk-widen|piedmont
+  const microName = params.get('micro');
+
+  // Reference benchmark or micro-benchmark
+  setStartupStatus(microName ? `Loading micro: ${microName}...` : 'Generating benchmark terrain...');
+  let benchHF: import('./engine/terrain/editableHeightfield').EditableHeightfield;
+
+  if (microName) {
+    const { getMicroBenchmark } = await import('./engine/terrain/microBenchmarks');
+    const micro = getMicroBenchmark(microName);
+    if (!micro) throw new Error(`Unknown micro-benchmark: ${microName}`);
+    benchHF = micro.heightfield;
+  } else {
+    const { createReferenceBenchmarkHeightfield } = await import('./engine/terrain/benchmarkHeightfield');
+    benchHF = createReferenceBenchmarkHeightfield();
+  }
 
   // AE1a: Run analytical coarse prepass (fast — no full bake on startup)
   const { DEFAULT_ANALYTICAL_PREPASS } = await import('./engine/terrain/analytical/types');

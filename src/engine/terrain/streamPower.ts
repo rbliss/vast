@@ -499,7 +499,7 @@ export function streamPowerErosion(
   // Used to modulate channel-initiation threshold — NOT direct carving.
   const protoChannel = new Float32Array(n);
 
-  // AE3.2: Use combined guidance if available, fall back to legacy channelStrength
+  // AE3.3: Build corridor influence field from all AE guidance fields
   const guidance = aeGuidance ?? (aeChannelStrength ? {
     channelStrength: aeChannelStrength,
     distToChannel: new Float32Array(n).fill(Infinity),
@@ -507,8 +507,24 @@ export function streamPowerErosion(
     valleyDepth: new Float32Array(n),
   } : null);
 
-  if (guidance) {
-    console.log(`[stream-power] AE3.2: persistent multi-field guidance active`);
+  // Precompute corridor field: smooth influence that covers the full valley width
+  // corridor[i] = smoothstep(1, 0, distToChannel / max(valleyWidth, eps)) * channelStrength
+  const corridor = guidance ? new Float32Array(n) : null;
+  if (guidance && corridor) {
+    const hasDist = guidance.distToChannel.length === n;
+    const hasWidth = guidance.valleyWidth.length === n;
+    for (let i = 0; i < n; i++) {
+      if (!hasDist || !hasWidth) {
+        corridor[i] = guidance.channelStrength[i];
+        continue;
+      }
+      const dist = guidance.distToChannel[i];
+      const width = Math.max(1, guidance.valleyWidth[i]);
+      const t = Math.min(1, dist / width);
+      const corr = (1 - t * t * (3 - 2 * t)) * guidance.channelStrength[i];
+      corridor[i] = corr;
+    }
+    console.log(`[stream-power] AE3.3: corridor field built from multi-field guidance`);
   }
 
   for (let iter = 0; iter < iterations; iter++) {
@@ -554,12 +570,11 @@ export function streamPowerErosion(
         protoChannel[i] *= decayRate;
       }
 
-      // AE3.2: Persistent guidance reinforcement — use AE as a floor
-      // After decay, ensure proto-channel never drops below AE guidance level
-      // This keeps the analytical drainage backbone active throughout all iterations
-      if (guidance) {
+      // AE3.3: Persistent corridor reinforcement
+      // Use the full corridor field (not just channelStrength) as the floor
+      if (corridor) {
         for (let i = 0; i < n; i++) {
-          const aeFloor = guidance.channelStrength[i] * 0.7;
+          const aeFloor = corridor[i] * 0.75;
           if (protoChannel[i] < aeFloor) protoChannel[i] = aeFloor;
         }
       }
@@ -684,15 +699,12 @@ export function streamPowerErosion(
           channelThreshold *= Math.max(0.15, 1.0 - Math.min(planCurv * 10.0, 0.85));
         }
 
-        // AE3.3: distToChannel — lower threshold near guided channel corridors
-        // Cells close to an AE-predicted channel should channelize much more easily
-        if (guidance && guidance.distToChannel.length > 0) {
-          const dist = guidance.distToChannel[idx];
-          const width = guidance.valleyWidth[idx];
-          if (dist < width * 2 && width > 0) {
-            // Within 2x the guided valley width: progressively lower threshold
-            const proximity = 1.0 - Math.min(1.0, dist / (width * 2));
-            channelThreshold *= Math.max(0.05, 1.0 - proximity * 0.9);
+        // AE3.3: Corridor-based threshold bias — direct from corridor field
+        if (corridor) {
+          const guide = corridor[idx];
+          if (guide > 0.01) {
+            // Strong corridor influence: threshold can drop to 25% of base
+            channelThreshold *= Math.max(0.25, 1.0 - guide * 0.75);
           }
         }
 
@@ -748,14 +760,20 @@ export function streamPowerErosion(
         const effectiveAreaExp = areaExponent * (0.7 + 0.3 * fluvialFraction);
         const effectiveSlopeExp = slopeExponent * (1.3 - 0.3 * fluvialFraction);
 
-        // AE3.3: valleyDepth — boost erosion intensity in AE-predicted channel zones
-        let aeDepthBoost = 1.0;
-        if (guidance && guidance.valleyDepth.length > 0 && guidance.valleyDepth[idx] > 0.5) {
-          // Scale erosion up to 2x in deep AE-predicted valleys
-          aeDepthBoost = 1.0 + Math.min(1.0, guidance.valleyDepth[idx] / 15) * 1.0;
+        // AE3.3: Corridor-based fluvial efficiency + depth maturity boost
+        let aeBoost = 1.0;
+        if (corridor) {
+          const guide = corridor[idx];
+          // Fluvial efficiency boost: guided cells erode up to 1.6x
+          aeBoost += guide * 0.6;
+          // Depth maturity boost: deeper AE valleys get additional intensity
+          if (guidance && guidance.valleyDepth.length > 0) {
+            const normalizedDepth = Math.min(1, guidance.valleyDepth[idx] / 15);
+            aeBoost += normalizedDepth * guide * 0.5; // up to 0.5x more from depth
+          }
         }
 
-        let erosion = effectiveK * R * mesaProtection * headwardBoost * aeDepthBoost *
+        let erosion = effectiveK * R * mesaProtection * headwardBoost * aeBoost *
           Math.pow(A, effectiveAreaExp) * Math.pow(S, effectiveSlopeExp);
         erosion = Math.min(erosion, maxErosion);
         const eroded = dt * erosion;
@@ -802,10 +820,12 @@ export function streamPowerErosion(
           const pz = fdx / flen;
 
           // Channel power scales with drainage area — stronger channels widen more
-          // AE3.2: Boost lateral erosion near AE-guided trunk corridors
+          // AE3.3: Corridor-based lateral erosion bias
           let channelPower = Math.min(4.0, Math.pow(A_here / 60.0, 0.4));
-          if (guidance && guidance.channelStrength[idx] > 0.1) {
-            channelPower *= 1.0 + guidance.channelStrength[idx] * 1.5; // up to 2.5x boost
+          if (corridor) {
+            const guide = corridor[idx];
+            // Boost lateral erosion up to 1.8x in guided corridors
+            channelPower *= 1.0 + guide * 0.8;
           }
 
           // Check both bank sides, multiple cells outward
