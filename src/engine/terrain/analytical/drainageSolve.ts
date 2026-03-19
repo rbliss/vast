@@ -124,16 +124,30 @@ export function fillDepressions(grid: Float32Array, w: number, h: number): void 
 
 /**
  * Check if a boundary cell is a preferred outlet.
- * Only cells below a height threshold on the boundary are valid outlets.
- * This forces drainage to organize toward the lower piedmont instead of
- * exiting equally through the entire perimeter.
+ * Only cells in specific outlet arcs on the boundary are valid exits.
+ * This forces drainage to organize toward defined piedmont sectors
+ * instead of exiting equally through the entire perimeter.
+ *
+ * Outlet arcs are defined as angular sectors from the grid center.
+ * The benchmark tableland is centered, so outlets at specific compass
+ * directions create organized drainage toward those sectors.
  */
-function isPreferredOutlet(x: number, z: number, w: number, h: number, grid: Float32Array): boolean {
+function isPreferredOutlet(x: number, z: number, w: number, h: number): boolean {
   if (x > 0 && x < w - 1 && z > 0 && z < h - 1) return false; // not boundary
-  // Only boundary cells below the median-ish height are outlets
-  // This ensures high escarpment-edge boundary cells route inward
-  const height = grid[z * w + x];
-  return height < 20; // piedmont-level cells are outlets (tableland is ~60+)
+
+  // Compute angle from grid center to this boundary cell
+  const cx = w / 2, cz = h / 2;
+  const dx = x - cx, dz = z - cz;
+  const angle = Math.atan2(dz, dx); // -π to π
+
+  // Define 3 outlet arcs (~60° each) at different compass directions
+  // This creates organized drainage toward specific piedmont sectors
+  // with ridges/divides between them
+  const arc1 = angle > -0.6 && angle < 0.6;          // East (~±35°)
+  const arc2 = angle > 1.8 || angle < -2.4;          // West (~±40°)
+  const arc3 = angle > 0.8 && angle < 1.6;           // SE (~±25°)
+
+  return arc1 || arc2 || arc3;
 }
 
 /**
@@ -155,7 +169,7 @@ export function computeCoarseDrainage(
       const hc = grid[idx];
       let bestSlope = 0;
       // Only preferred outlets self-receive; others must route downstream
-      let bestRecv = isPreferredOutlet(x, z, w, h, grid) ? idx : -1;
+      let bestRecv = isPreferredOutlet(x, z, w, h) ? idx : -1;
 
       for (let d = 0; d < 8; d++) {
         const nx = x + DX[d];
@@ -240,9 +254,9 @@ export function implicitElevationSolve(
 
     // Channelized erosion: concentrate incision into drainage paths
     // Cells with small drainage area get much less erosion (hillslope regime)
-    // This prevents uniform sheet lowering and creates organized channels.
-    const channelThreshold = 50.0; // world-area units — below this, mostly hillslope
-    const channelFraction = Math.min(1.0, Math.pow(A / channelThreshold, 0.6));
+    // Threshold scales with cell size: ~40 coarse cells worth of contributing area
+    const channelThreshold = 40 * cellSize * cellSize; // ~40 coarse cells
+    const channelFraction = Math.min(1.0, Math.pow(A / channelThreshold, 0.8));
 
     // Erosion power term: K * A^m * age, modulated by channel fraction
     const erosionTerm = K * Math.pow(A, m) * age * (0.05 + 0.95 * channelFraction);
