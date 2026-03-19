@@ -57,8 +57,8 @@ export class InspectorPanel extends LitElement {
   @state() private _brushStrength = 10;
 
   // Erosion (blank canvas)
-  @state() private _canvasErosionIter = 15;
-  @state() private _canvasErosionK = 0.006;
+  @state() private _canvasErosionIter = 160;
+  @state() private _canvasErosionK = 0.002;
   @state() private _erosionOpen = true;
 
   // Section collapse
@@ -279,8 +279,8 @@ export class InspectorPanel extends LitElement {
           <span class="class-tag tag-rebake">Apply</span>
         </div>
         ${this._erosionOpen ? html`<div class="section-body">
-          ${this._slider('Iterations', this._canvasErosionIter, 5, 100, 1, v => { this._canvasErosionIter = v; })}
-          ${this._slider('Strength', this._canvasErosionK, 0.001, 0.02, 0.001, v => { this._canvasErosionK = v; })}
+          ${this._slider('Iterations', this._canvasErosionIter, 1, 300, 1, v => { this._canvasErosionIter = v; })}
+          ${this._slider('Strength', this._canvasErosionK, 0.0001, 0.01, 0.0001, v => { this._canvasErosionK = v; })}
           <button class="rebake-btn" @click=${() => this._fire('apply-erosion', {
             iterations: this._canvasErosionIter,
             erosionStrength: this._canvasErosionK,

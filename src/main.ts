@@ -53,21 +53,22 @@ function setStartupStatus(msg: string) {
   if (startupEl) startupEl.textContent = msg;
 }
 
-// ── Create document: blank canvas by default, test env via ?testenv or ?preset, benchmark via ?benchmark ──
+// ── Create document: benchmark by default, blank canvas via ?blank, test env via ?testenv or ?preset ──
 const isTestEnv = params.has('testenv') || params.has('preset');
-const isBenchmark = params.has('benchmark');
+const isBlankCanvas = params.has('blank');
+const isBenchmark = !isTestEnv && !isBlankCanvas;
 let worldDoc: WorldDocument;
 
-if (isBenchmark) {
-  setStartupStatus('Loading reference benchmark...');
+if (isBlankCanvas) {
+  setStartupStatus('Starting blank canvas...');
   worldDoc = createBlankCanvasDocument();
-  worldDoc.meta.name = 'Reference Benchmark';
 } else if (isTestEnv) {
   setStartupStatus('Loading test environment...');
   worldDoc = createTestEnvironmentDocument();
 } else {
-  setStartupStatus('Starting blank canvas...');
+  setStartupStatus('Loading reference benchmark...');
   worldDoc = createBlankCanvasDocument();
+  worldDoc.meta.name = 'Reference Benchmark';
 }
 worldDoc.scene.dpr.mode = dprMode;
 worldDoc.scene.dpr.initial = dprInitial;
@@ -376,7 +377,7 @@ shell.addEventListener('rebake', (async () => {
 
 // ── Environment switching ──
 shell.addEventListener('blank-canvas', () => {
-  window.location.href = '/';
+  window.location.href = '/?blank';
 });
 
 shell.addEventListener('test-environment', () => {
@@ -384,21 +385,78 @@ shell.addEventListener('test-environment', () => {
 });
 
 shell.addEventListener('reference-benchmark', () => {
-  window.location.href = '/?benchmark';
+  window.location.href = '/';
 });
 
 shell.addEventListener('reset-canvas', () => {
   app.resetCanvas();
 });
 
-shell.addEventListener('apply-erosion', ((e: CustomEvent) => {
-  if (!app.isEditable) return;
-  const opts = e?.detail ?? {};
+shell.addEventListener('apply-erosion', (async (e: Event) => {
+  const detail = (e as CustomEvent)?.detail ?? {};
+  const opts = detail;
   const iterations = opts.iterations ?? 15;
+
+  if (isBenchmark) {
+    // Benchmark mode: rebake through production pipeline with updated params
+    shell.statusText = `Baking terrain: 0/${iterations} iterations...`;
+
+    try {
+      const { createReferenceBenchmarkHeightfield, BENCHMARK_EROSION } = await import('./engine/terrain/benchmarkHeightfield');
+      const { runBake } = await import('./engine/bake/terrainBakeManager');
+      const { BakedTerrainSource } = await import('./engine/bake/bakedTerrainSource');
+      const { MACRO_PRESETS } = await import('./engine/terrain/macroTerrain');
+      const { domainFromBakeMetadata } = await import('./engine/bake/terrainDomain');
+
+      const benchHF = createReferenceBenchmarkHeightfield();
+      const erosionCfg = {
+        ...BENCHMARK_EROSION,
+        streamPower: {
+          ...BENCHMARK_EROSION.streamPower,
+          iterations,
+          erosionK: opts.erosionStrength ?? BENCHMARK_EROSION.streamPower.erosionK,
+        },
+      };
+
+      const artifacts = await runBake(
+        { macro: MACRO_PRESETS['chain'], erosion: erosionCfg },
+        (progress) => {
+          const stageLabels: Record<string, string> = {
+            'sampling': 'Loading', 'stream-power': 'Eroding', 'fan-deposition': 'Fans',
+            'thermal': 'Relaxing', 'packaging': 'Packaging',
+          };
+          shell.statusText = `Baking: ${stageLabels[progress.stage] ?? progress.stage} (${progress.stageIndex + 1}/${progress.totalStages})`;
+        },
+        benchHF.grid,
+      );
+
+      const newSource = new BakedTerrainSource(benchHF, artifacts);
+      const newDomain = domainFromBakeMetadata(artifacts.metadata, 256, false);
+      app.applyNewTerrain({ source: newSource, bakeArtifacts: artifacts, domain: newDomain });
+
+      // Recenter chunks
+      app.centerCX = Infinity;
+      app.centerCZ = Infinity;
+      app.updateChunks();
+
+      // Re-apply clay mode after terrain swap
+      app.setClayMode(true);
+
+      runtimeStore.setDomain(newDomain);
+      shell.statusText = `Bake complete — ${iterations} iterations (${Math.round(artifacts.metadata.computeTimeMs)}ms)`;
+      setTimeout(() => { shell.statusText = runtimeStore.statusLine; }, 4000);
+    } catch (err) {
+      shell.statusText = `Bake failed: ${err instanceof Error ? err.message : err}`;
+      setTimeout(() => { shell.statusText = runtimeStore.statusLine; }, 4000);
+    }
+    return;
+  }
+
+  // Editable mode: sculpt erosion
+  if (!app.isEditable) return;
   shell.statusText = `Eroding terrain: 0/${iterations} iterations...`;
   app.applyErosion({
     ...opts,
-    fullPipeline: isBenchmark,
     onProgress: (iter: number) => {
       shell.statusText = `Eroding terrain: ${iter}/${iterations} iterations...`;
     },
@@ -499,8 +557,7 @@ if (worldDoc.scene.presentation) {
   app.setPresentationMode(true).then(syncToolbar);
 }
 // ── Blank canvas: init editable heightfield + sculpt interaction ──
-// (Benchmark now uses production bake path — no editable mode)
-if (!isBenchmark && !isTestEnv && terrainSource instanceof (await import('./engine/terrain/editableHeightfield')).EditableHeightfield) {
+if (isBlankCanvas && terrainSource instanceof (await import('./engine/terrain/editableHeightfield')).EditableHeightfield) {
   app.initEditableMode(1024, 800, terrainSource as any);
 
   // Clay mode AFTER initEditableMode (slots are rebuilt, need clay material applied to new slots)
@@ -750,10 +807,17 @@ if (isBenchmark) {
   // Disable chunk skirts for clean benchmark review rendering
   app.noSkirts = true;
 
-  // Force chunk rebuild centered on new target (default init was centered at origin)
+  // Rebuild with extended coverage to show the tableland + piedmont (±480 world units)
+  app.rebuildExtendedCoverage(480);
+
+  // Force chunk rebuild centered on new target
   app.centerCX = Infinity;
   app.centerCZ = Infinity;
   app.updateChunks();
+
+  // Re-apply clay mode AFTER slot rebuild (rebuild creates new slots with textured material)
+  app.setClayMode(true);
+  viewportStore.setClayMode(true);
 
   /** Capture all benchmark views (pre- or post-erosion) */
   (window as any).__benchmarkCapture = async function(stage: string = 'initial') {

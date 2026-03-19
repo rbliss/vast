@@ -613,6 +613,20 @@ export function streamPowerErosion(
           if (protoChannel[idx] > 1.0) protoChannel[idx] = 1.0;
         }
       }
+
+      // Proto-field diagnostics (every 20 iterations)
+      if (iter % 20 === 0) {
+        let maxProto = 0, sumProto = 0, above05 = 0, above03 = 0;
+        let channelCount = 0;
+        for (let i = 0; i < n; i++) {
+          if (protoChannel[i] > maxProto) maxProto = protoChannel[i];
+          sumProto += protoChannel[i];
+          if (protoChannel[i] > 0.5) above05++;
+          if (protoChannel[i] > 0.03) above03++;
+          if (area[i] * slopes[i] > baseThreshold) channelCount++;
+        }
+        console.log(`[proto] iter=${iter}: max=${maxProto.toFixed(3)} mean=${(sumProto/n).toFixed(4)} >0.5=${above05} >0.03=${above03} channels=${channelCount}`);
+      }
     }
 
     // Step 3: Stream-power incision + sediment production
@@ -649,12 +663,6 @@ export function streamPowerErosion(
 
         // Slope-area index (Montgomery-Dietrich criterion, world-scale)
         const slopeAreaIndex = A * S;
-        const isChannel = slopeAreaIndex > channelThreshold;
-
-        // Channel intensity: how far above threshold (0 = at threshold, 1+ = well above)
-        const channelIntensity = isChannel
-          ? Math.min((slopeAreaIndex / channelThreshold - 1.0), 3.0)
-          : 0;
 
         // ── Headward erosion (knickpoint retreat) ──
         // Above a knickpoint (downstream steeper), amplify erosion to bite inward
@@ -680,21 +688,27 @@ export function streamPowerErosion(
           mesaProtection = 1.0 - rawProtection * Math.max(0.2, 0.80 - convergenceOverride - headwardOverride);
         }
 
-        // ── Two-regime erosion ──
-        let erosion: number;
-        if (isChannel) {
-          // FLUVIAL REGIME: full stream-power with channel intensity scaling
-          // More developed channels (higher intensity) erode faster
-          const fluvialK = erosionK * (1.0 + channelIntensity * 0.5);
-          erosion = fluvialK * R * mesaProtection * headwardBoost *
-            Math.pow(A, areaExponent) * Math.pow(S, slopeExponent);
-        } else {
-          // HILLSLOPE REGIME: weak erosion below channel threshold
-          // Still some incision from overland flow, but much weaker
-          const hillslopeK = erosionK * 0.15;
-          erosion = hillslopeK * R * mesaProtection *
-            Math.pow(A, areaExponent * 0.7) * Math.pow(S, slopeExponent * 1.3);
-        }
+        // ── Gradual regime transition (replaces binary two-regime) ──
+        // Instead of a sharp channel/hillslope gate, use a smooth transition.
+        // Cells near the threshold get partial fluvial erosion, creating
+        // a continuum that allows gradual tributary emergence.
+        const thresholdRatio = slopeAreaIndex / Math.max(0.1, channelThreshold);
+        // fluvialFraction: 0 = pure hillslope, 1 = full fluvial
+        // Smooth ramp from 0.5× threshold to 2× threshold
+        const fluvialFraction = Math.max(0, Math.min(1, (thresholdRatio - 0.5) / 1.5));
+
+        // Blend between hillslope and fluvial erosion rates
+        const hillslopeK = erosionK * 0.12;
+        const channelIntensity = Math.min(3.0, Math.max(0, thresholdRatio - 1.0));
+        const fluvialK = erosionK * (1.0 + channelIntensity * 0.5);
+        const effectiveK = hillslopeK + (fluvialK - hillslopeK) * fluvialFraction;
+
+        // Blend area/slope exponents (hillslope uses different scaling)
+        const effectiveAreaExp = areaExponent * (0.7 + 0.3 * fluvialFraction);
+        const effectiveSlopeExp = slopeExponent * (1.3 - 0.3 * fluvialFraction);
+
+        let erosion = effectiveK * R * mesaProtection * headwardBoost *
+          Math.pow(A, effectiveAreaExp) * Math.pow(S, effectiveSlopeExp);
         erosion = Math.min(erosion, maxErosion);
         const eroded = dt * erosion;
         grid[idx] -= eroded;

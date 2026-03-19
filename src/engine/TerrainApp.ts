@@ -370,6 +370,13 @@ export class TerrainApp {
   /** Disable chunk skirts (for benchmark/editable review rendering) */
   set noSkirts(v: boolean) { this._noSkirts = v; }
 
+  /** Rebuild slot grid with extended coverage radius (for benchmark full-terrain view) */
+  rebuildExtendedCoverage(worldExtent: number): void {
+    const radius = Math.ceil(worldExtent / CHUNK_SIZE);
+    this._rebuildSlotsUniformLOD(radius);
+    console.log(`[terrain] extended coverage: radius ${radius} (${this.slots.length} slots)`);
+  }
+
   /** Create/update brush preview ring on terrain */
   updateBrushPreview(worldX: number, worldZ: number, radius: number): void {
     if (!this._brushPreview) {
@@ -459,7 +466,7 @@ export class TerrainApp {
   }
 
   /** Rebuild all slots at uniform LOD (eliminates LOD seams for sculpting) */
-  private _rebuildSlotsUniformLOD(): void {
+  private _rebuildSlotsUniformLOD(radius: number = HORIZON_GRID_RADIUS): void {
     // Remove existing slots from scene
     for (const slot of this.slots) {
       this.scene.remove(slot.mesh);
@@ -469,10 +476,11 @@ export class TerrainApp {
     }
     this.slots.length = 0;
 
-    // Use LOD_MID (64 segments) for all slots — uniform quality, no seams
-    const uniformLod = { segments: 64, displacement: false };
-    for (let dz = -HORIZON_GRID_RADIUS; dz <= HORIZON_GRID_RADIUS; dz++) {
-      for (let dx = -HORIZON_GRID_RADIUS; dx <= HORIZON_GRID_RADIUS; dx++) {
+    // Use lower LOD for large grids to keep vertex count manageable
+    const segments = radius > 10 ? 32 : 64;
+    const uniformLod = { segments, displacement: false };
+    for (let dz = -radius; dz <= radius; dz++) {
+      for (let dx = -radius; dx <= radius; dx++) {
         const foliagePayload = this.foliage.createInstances();
         const slot = createChunkSlot(uniformLod, dx, dz, this.scene, this.matDisp, this.matNoDisp, foliagePayload);
         slot.mesh.visible = true;
@@ -882,8 +890,8 @@ export class TerrainApp {
     this._applyMovement(dt);
     this.controls.update();
 
-    // Skip dynamic visibility in editable/sculpt mode — keep all slots visible
-    if (!this._editableHF) {
+    // Skip dynamic visibility in editable/sculpt/benchmark mode — keep all slots visible
+    if (!this._editableHF && !this._noSkirts) {
       const { mode, radius } = this._computeCoverageMode();
       if (mode !== this._coverageMode || radius !== this._activeRadius) {
         this._coverageMode = mode;

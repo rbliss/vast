@@ -27,7 +27,7 @@ export const BENCHMARK_EROSION: ErosionConfig = {
   streamPower: {
     ...DEFAULT_STREAM_POWER,
     enabled: true,
-    iterations: 160,           // H2.cal: 2x more iterations for deeper incision
+    iterations: 160,           // H2.cal strong incision regime
     erosionK: 0.002,           // H2.cal: 4x stronger K for visible drainage skeleton
     areaExponent: 0.4,
     slopeExponent: 1.0,
