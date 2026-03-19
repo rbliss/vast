@@ -468,6 +468,7 @@ export function streamPowerErosion(
   cellSize: number, params: StreamPowerParams,
   resistanceGen?: ResistanceGenerator,
   onProgress?: (iteration: number) => void,
+  aeChannelStrength?: Float32Array,
 ): StreamPowerResult {
   const { iterations, erosionK, areaExponent, slopeExponent, dt,
           diffusionRate, minSlope, upliftRate, maxErosion,
@@ -488,6 +489,15 @@ export function streamPowerErosion(
   // Accumulates across iterations from multiscale convergence signals + headward support.
   // Used to modulate channel-initiation threshold — NOT direct carving.
   const protoChannel = new Float32Array(n);
+
+  // AE3: Seed proto-channel field from analytical graph guidance
+  // This gives the iterative bake a strong drainage backbone to work from
+  if (aeChannelStrength) {
+    for (let i = 0; i < n; i++) {
+      protoChannel[i] = aeChannelStrength[i] * 0.8; // strong initial seed
+    }
+    console.log(`[stream-power] AE3: proto-channel field seeded from analytical guidance`);
+  }
 
   for (let iter = 0; iter < iterations; iter++) {
     if (onProgress) onProgress(iter + 1);

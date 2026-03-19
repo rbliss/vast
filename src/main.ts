@@ -131,7 +131,10 @@ if (isTestEnv) {
 
   setStartupStatus('Running analytical prepass...');
   const prepassConfig = { ...DEFAULT_ANALYTICAL_PREPASS };
-  runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, prepassConfig);
+  const prepassResult = runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, prepassConfig);
+
+  // Store guidance fields for H2 bake integration
+  (window as any).__aeGuidance = prepassResult.guidance;
 
   // Prepass-only mode: use the prepass result directly as terrain source (no full bake)
   // The prepass modifies benchHF.grid in place — use it as the terrain source
@@ -398,7 +401,7 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
       const { DEFAULT_ANALYTICAL_PREPASS } = await import('./engine/terrain/analytical/types');
       const { runAnalyticalPrepass } = await import('./engine/terrain/analytical/coarsePrepass');
       shell.statusText = 'Running analytical prepass...';
-      runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, DEFAULT_ANALYTICAL_PREPASS);
+      const rebakePrepass = runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, DEFAULT_ANALYTICAL_PREPASS);
 
       const erosionCfg = {
         ...BENCHMARK_EROSION,
@@ -419,6 +422,8 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
           shell.statusText = `Baking: ${stageLabels[progress.stage] ?? progress.stage} (${progress.stageIndex + 1}/${progress.totalStages})`;
         },
         benchHF.grid,
+        undefined, // onStageCapture
+        rebakePrepass.guidance.channelStrength, // AE3 guidance
       );
 
       const newSource = new BakedTerrainSource(benchHF, artifacts);

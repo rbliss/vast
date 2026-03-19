@@ -43,6 +43,7 @@ export async function runBake(
   onProgress?: BakeProgressCallback,
   preSampledGrid?: Float32Array,
   onStageCapture?: StageCaptureHandler,
+  aeChannelStrength?: Float32Array,
 ): Promise<TerrainBakeArtifacts> {
   // Step 1: Check cache (skip for pre-sampled grids — they're deterministic but not macro-keyed)
   if (!preSampledGrid) {
@@ -68,7 +69,7 @@ export async function runBake(
     artifacts = await runBakeInWorker(request, onProgress, preSampledGrid, onStageCapture);
   } catch (err) {
     console.warn('[bake] worker failed, falling back to main thread:', err);
-    artifacts = runBakeOnMainThread(request, preSampledGrid, onStageCapture);
+    artifacts = runBakeOnMainThread(request, preSampledGrid, onStageCapture, aeChannelStrength);
   }
 
   // Step 3: Save to cache (skip for pre-sampled grids)
@@ -159,7 +160,7 @@ function runBakeInWorker(
 /**
  * Synchronous main-thread fallback.
  */
-function runBakeOnMainThread(request: TerrainBakeRequest, preSampledGrid?: Float32Array, onStageCapture?: StageCaptureHandler): TerrainBakeArtifacts {
+function runBakeOnMainThread(request: TerrainBakeRequest, preSampledGrid?: Float32Array, onStageCapture?: StageCaptureHandler, aeChannelStrength?: Float32Array): TerrainBakeArtifacts {
   console.log('[bake] running on main thread (fallback)');
-  return executeBake(request, preSampledGrid, onStageCapture);
+  return executeBake(request, preSampledGrid, onStageCapture, aeChannelStrength ? { channelStrength: aeChannelStrength, distToChannel: new Float32Array(0), valleyWidth: new Float32Array(0), valleyDepth: new Float32Array(0) } : undefined);
 }

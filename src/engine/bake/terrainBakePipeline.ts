@@ -52,10 +52,19 @@ function logStageDiag(stage: string, grid: Float32Array, initial: Float32Array) 
   console.log(`[bake-diag] ${stage}: maxΔ=${maxDelta.toFixed(2)} meanΔ=${meanDelta.toFixed(3)} changed=${changedCells} (${(changedCells/grid.length*100).toFixed(1)}%)`);
 }
 
+/** AE3 guidance fields from analytical prepass */
+export interface AEGuidanceFields {
+  channelStrength: Float32Array;
+  distToChannel: Float32Array;
+  valleyWidth: Float32Array;
+  valleyDepth: Float32Array;
+}
+
 export function executeBake(
   request: TerrainBakeRequest,
   preSampledGrid?: Float32Array,
   onStageCapture?: StageCaptureCallback,
+  aeGuidance?: AEGuidanceFields,
 ): TerrainBakeArtifacts {
   const { macro, erosion } = request;
   const n = erosion.gridSize;
@@ -94,7 +103,7 @@ export function executeBake(
   let tStreamPower = 0;
   if (erosion.streamPower.enabled) {
     const t = performance.now();
-    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower, resistanceGen);
+    spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower, resistanceGen, undefined, aeGuidance?.channelStrength);
     tStreamPower = performance.now() - t;
     console.log(`[bake] stream-power: ${erosion.streamPower.iterations} iterations (${tStreamPower.toFixed(0)}ms)`);
   }

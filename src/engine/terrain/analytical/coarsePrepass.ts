@@ -22,12 +22,24 @@ import { extractDrainageGraph, generateGuidanceFields, applyGuidanceToTerrain } 
  * @param extent - World-space half-extent (e.g. 800)
  * @param config - Prepass configuration
  */
+/** Full-resolution guidance fields for H2 bake integration */
+export interface FullResGuidance {
+  /** Channel strength [0,1] — seed for proto-channel susceptibility */
+  channelStrength: Float32Array;
+  /** Distance to nearest channel centerline (world units) */
+  distToChannel: Float32Array;
+  /** Target valley width (world units) */
+  valleyWidth: Float32Array;
+  /** Target valley depth */
+  valleyDepth: Float32Array;
+}
+
 export function runAnalyticalPrepass(
   grid: Float32Array,
   gridSize: number,
   extent: number,
   config: AnalyticalPrepassConfig,
-): { coarseGrid: Float32Array; coarseSize: number } {
+): { coarseGrid: Float32Array; coarseSize: number; guidance: FullResGuidance } {
   const t0 = performance.now();
   const coarseSize = config.coarseGridSize;
   const fullCellSize = (extent * 2) / (gridSize - 1);
@@ -102,8 +114,9 @@ export function runAnalyticalPrepass(
   // 3d. Generate raster guidance fields from graph
   const fields = generateGuidanceFields(graph, coarseSize, coarseSize, coarseCellSize);
 
-  // 3e. Apply graph-shaped valleys to terrain (not trench carving)
-  applyGuidanceToTerrain(coarseGrid, coarseInitial, fields, coarseSize, coarseSize, config.blendStrength);
+  // 3e. Light height carving — secondary to guidance fields
+  // Use reduced blend so the prepass steers but doesn't dominate
+  applyGuidanceToTerrain(coarseGrid, coarseInitial, fields, coarseSize, coarseSize, config.blendStrength * 0.5);
 
   // ── Step 4: Light smoothing ──
   for (let s = 0; s < config.smoothingPasses + 1; s++) {
@@ -158,8 +171,56 @@ export function runAnalyticalPrepass(
     }
   }
 
-  const tTotal = performance.now() - t0;
-  console.log(`[analytical] prepass complete: ${tTotal.toFixed(0)}ms total`);
+  // ── Step 6: Upsample guidance fields to full resolution ──
+  const fullN = gridSize * gridSize;
+  const fullGuidance: FullResGuidance = {
+    channelStrength: new Float32Array(fullN),
+    distToChannel: new Float32Array(fullN).fill(Infinity),
+    valleyWidth: new Float32Array(fullN),
+    valleyDepth: new Float32Array(fullN),
+  };
 
-  return { coarseGrid, coarseSize };
+  for (let fz = 0; fz < gridSize; fz++) {
+    for (let fx = 0; fx < gridSize; fx++) {
+      const wx = -extent + fx * fullCellSize;
+      const wz = -extent + fz * fullCellSize;
+      const ccx = (wx + extent) / coarseCellSize;
+      const ccz = (wz + extent) / coarseCellSize;
+      const ix = Math.min(coarseSize - 2, Math.max(0, Math.floor(ccx)));
+      const iz = Math.min(coarseSize - 2, Math.max(0, Math.floor(ccz)));
+      const fracX = ccx - ix;
+      const fracZ = ccz - iz;
+
+      const fullIdx = fz * gridSize + fx;
+
+      // Bilinear upsample each guidance field
+      for (const [coarseField, fullField] of [
+        [fields.channelStrength, fullGuidance.channelStrength],
+        [fields.valleyWidth, fullGuidance.valleyWidth],
+        [fields.valleyDepth, fullGuidance.valleyDepth],
+      ] as [Float32Array, Float32Array][]) {
+        const v00 = coarseField[iz * coarseSize + ix];
+        const v10 = coarseField[iz * coarseSize + ix + 1];
+        const v01 = coarseField[(iz + 1) * coarseSize + ix];
+        const v11 = coarseField[(iz + 1) * coarseSize + ix + 1];
+        fullField[fullIdx] =
+          v00 * (1 - fracX) * (1 - fracZ) +
+          v10 * fracX * (1 - fracZ) +
+          v01 * (1 - fracX) * fracZ +
+          v11 * fracX * fracZ;
+      }
+
+      // Distance field — take min of bilinear samples (conservative)
+      const d00 = fields.distToChannel[iz * coarseSize + ix];
+      const d10 = fields.distToChannel[iz * coarseSize + ix + 1];
+      const d01 = fields.distToChannel[(iz + 1) * coarseSize + ix];
+      const d11 = fields.distToChannel[(iz + 1) * coarseSize + ix + 1];
+      fullGuidance.distToChannel[fullIdx] = Math.min(d00, d10, d01, d11);
+    }
+  }
+
+  const tTotal = performance.now() - t0;
+  console.log(`[analytical] prepass complete: ${tTotal.toFixed(0)}ms total, ${graph.nodes.length} graph nodes, ${graph.edges.length} edges`);
+
+  return { coarseGrid, coarseSize, guidance: fullGuidance };
 }
