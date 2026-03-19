@@ -30,8 +30,11 @@ export function runAnalyticalPrepass(
   const fullCellSize = (extent * 2) / (gridSize - 1);
   const coarseCellSize = (extent * 2) / (coarseSize - 1);
 
-  // ── Step 1: Downsample to coarse grid ──
+  // ── Step 1: Relief-aware downsample to coarse grid ──
+  // Blend between bilinear average and local minimum to preserve
+  // reentrant hollows and convergent features at the rim.
   const coarseGrid = new Float32Array(coarseSize * coarseSize);
+  const sampleRadius = Math.max(1, Math.round(fullCellSize > 0 ? coarseCellSize / fullCellSize * 0.5 : 1));
   for (let cz = 0; cz < coarseSize; cz++) {
     for (let cx = 0; cx < coarseSize; cx++) {
       const wx = -extent + cx * coarseCellSize;
@@ -44,11 +47,26 @@ export function runAnalyticalPrepass(
       const fx = gx - ix;
       const fz = gz - iz;
 
-      coarseGrid[cz * coarseSize + cx] =
+      // Bilinear average
+      const bilinear =
         grid[iz * gridSize + ix] * (1 - fx) * (1 - fz) +
         grid[iz * gridSize + ix + 1] * fx * (1 - fz) +
         grid[(iz + 1) * gridSize + ix] * (1 - fx) * fz +
         grid[(iz + 1) * gridSize + ix + 1] * fx * fz;
+
+      // Local minimum in a small neighborhood (preserves hollows)
+      let localMin = bilinear;
+      for (let dz = -sampleRadius; dz <= sampleRadius; dz++) {
+        for (let dx = -sampleRadius; dx <= sampleRadius; dx++) {
+          const sx = Math.min(gridSize - 1, Math.max(0, ix + dx));
+          const sz = Math.min(gridSize - 1, Math.max(0, iz + dz));
+          const h = grid[sz * gridSize + sx];
+          if (h < localMin) localMin = h;
+        }
+      }
+
+      // Blend: 70% bilinear + 30% local min (preserves hollows without creating pits)
+      coarseGrid[cz * coarseSize + cx] = bilinear * 0.7 + localMin * 0.3;
     }
   }
 

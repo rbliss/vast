@@ -162,61 +162,37 @@ export function computeCoarseDrainage(
   const receiver = new Int32Array(n);
   const area = new Float32Array(n);
 
-  // Randomized downhill receiver selection (paper-inspired)
-  // Instead of always choosing the steepest neighbor (which creates
-  // too few convergent paths on smooth terrain), choose randomly
-  // among all downhill neighbors weighted by slope.
-  // This creates more diverse drainage paths and natural-looking
-  // channel splitting at similar-slope locations.
-  // Uses deterministic hash-based pseudo-random for reproducibility.
+  // Multi-flow routing: distribute flow to ALL downhill neighbors
+  // proportionally to slope. This creates richer drainage accumulation
+  // than single-receiver D8 because flow spreads on flat areas and
+  // concentrates naturally where slopes converge.
+  //
+  // For the elevation solve we still need a single primary receiver,
+  // so we also track the steepest-descent receiver separately.
+
+  // First pass: find primary (steepest) receiver for each cell
   for (let z = 0; z < h; z++) {
     for (let x = 0; x < w; x++) {
       const idx = z * w + x;
-      const hc = grid[idx];
-
-      // Only preferred outlets self-receive
       if (isPreferredOutlet(x, z, w, h)) {
         receiver[idx] = idx;
         continue;
       }
-
-      // Collect all downhill neighbors with their slopes
-      const candidates: number[] = [];
-      const weights: number[] = [];
-      let totalWeight = 0;
-
+      const hc = grid[idx];
+      let bestSlope = 0;
+      let bestRecv = -1;
       for (let d = 0; d < 8; d++) {
         const nx = x + DX[d];
         const nz = z + DZ[d];
         if (nx < 0 || nx >= w || nz < 0 || nz >= h) continue;
         const ni = nz * w + nx;
         const slope = (hc - grid[ni]) / (DIST[d] * cellSize);
-        if (slope > 0.0001) {
-          candidates.push(ni);
-          const w_d = slope * slope; // weight by slope² for moderate focusing
-          weights.push(w_d);
-          totalWeight += w_d;
+        if (slope > bestSlope) {
+          bestSlope = slope;
+          bestRecv = ni;
         }
       }
-
-      if (candidates.length === 0) {
-        receiver[idx] = idx; // pit
-        continue;
-      }
-
-      // Deterministic pseudo-random selection weighted by slope²
-      // Hash based on cell position for reproducibility
-      const hash = ((idx * 2654435761) >>> 0) / 4294967296; // 0-1
-      let cumWeight = 0;
-      let chosen = candidates[candidates.length - 1];
-      for (let c = 0; c < candidates.length; c++) {
-        cumWeight += weights[c] / totalWeight;
-        if (hash < cumWeight) {
-          chosen = candidates[c];
-          break;
-        }
-      }
-      receiver[idx] = chosen;
+      receiver[idx] = bestRecv >= 0 ? bestRecv : idx;
     }
   }
 
@@ -225,13 +201,40 @@ export function computeCoarseDrainage(
   for (let i = 0; i < n; i++) highToLow[i] = i;
   highToLow.sort((a, b) => grid[b] - grid[a]);
 
-  // Accumulate area in upstream order (highest first → area flows downstream)
+  // Multi-flow area accumulation: distribute area to ALL downhill neighbors
+  // weighted by slope (MFD-style). This creates much richer accumulation
+  // patterns than single-receiver routing.
   area.fill(cellSize * cellSize);
   for (let i = 0; i < n; i++) {
     const idx = highToLow[i];
-    const recv = receiver[idx];
-    if (recv !== idx) {
-      area[recv] += area[idx];
+    const x = idx % w;
+    const z = (idx - x) / w;
+    const hc = grid[idx];
+
+    if (receiver[idx] === idx) continue; // outlet
+
+    // Compute slope to all downhill neighbors
+    let totalSlope = 0;
+    const neighIdx: number[] = [];
+    const neighSlope: number[] = [];
+    for (let d = 0; d < 8; d++) {
+      const nx = x + DX[d];
+      const nz = z + DZ[d];
+      if (nx < 0 || nx >= w || nz < 0 || nz >= h) continue;
+      const ni = nz * w + nx;
+      const slope = (hc - grid[ni]) / (DIST[d] * cellSize);
+      if (slope > 0) {
+        neighIdx.push(ni);
+        neighSlope.push(slope);
+        totalSlope += slope;
+      }
+    }
+
+    // Distribute area proportionally to slope
+    if (totalSlope > 0) {
+      for (let c = 0; c < neighIdx.length; c++) {
+        area[neighIdx[c]] += area[idx] * (neighSlope[c] / totalSlope);
+      }
     }
   }
 

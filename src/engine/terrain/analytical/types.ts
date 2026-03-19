@@ -27,7 +27,7 @@ export interface AnalyticalPrepassConfig {
 
 export const DEFAULT_ANALYTICAL_PREPASS: AnalyticalPrepassConfig = {
   enabled: true,
-  coarseGridSize: 384,
+  coarseGridSize: 512,         // AE1a.6: higher res — preserve rim hollows better
   fixedPointIterations: 10,  // AE1a.3: more iterations for outlet-constrained convergence
   age: 3.0,                  // AE1a.3: stronger age — deep incision
   erosionK: 0.003,           // AE1a.3: stronger K
