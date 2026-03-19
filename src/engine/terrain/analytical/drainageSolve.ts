@@ -140,12 +140,12 @@ function isPreferredOutlet(x: number, z: number, w: number, h: number): boolean 
   const dx = x - cx, dz = z - cz;
   const angle = Math.atan2(dz, dx); // -π to π
 
-  // Define 3 outlet arcs (~60° each) at different compass directions
-  // This creates organized drainage toward specific piedmont sectors
-  // with ridges/divides between them
-  const arc1 = angle > -0.6 && angle < 0.6;          // East (~±35°)
-  const arc2 = angle > 1.8 || angle < -2.4;          // West (~±40°)
-  const arc3 = angle > 0.8 && angle < 1.6;           // SE (~±25°)
+  // 3 narrow outlet arcs (~20° each) at specific piedmont directions
+  // Total ~15% of boundary. Creates strong drainage organization
+  // with wide ridge/divide zones between outlets.
+  const arc1 = angle > -0.2 && angle < 0.2;          // E (~±12°)
+  const arc2 = angle > 2.9 || angle < -2.9;          // W (~±14°)
+  const arc3 = angle > 1.3 && angle < 1.55;          // SSE (~±7°)
 
   return arc1 || arc2 || arc3;
 }
@@ -162,14 +162,28 @@ export function computeCoarseDrainage(
   const receiver = new Int32Array(n);
   const area = new Float32Array(n);
 
-  // Find steepest descent receiver for each cell
+  // Randomized downhill receiver selection (paper-inspired)
+  // Instead of always choosing the steepest neighbor (which creates
+  // too few convergent paths on smooth terrain), choose randomly
+  // among all downhill neighbors weighted by slope.
+  // This creates more diverse drainage paths and natural-looking
+  // channel splitting at similar-slope locations.
+  // Uses deterministic hash-based pseudo-random for reproducibility.
   for (let z = 0; z < h; z++) {
     for (let x = 0; x < w; x++) {
       const idx = z * w + x;
       const hc = grid[idx];
-      let bestSlope = 0;
-      // Only preferred outlets self-receive; others must route downstream
-      let bestRecv = isPreferredOutlet(x, z, w, h) ? idx : -1;
+
+      // Only preferred outlets self-receive
+      if (isPreferredOutlet(x, z, w, h)) {
+        receiver[idx] = idx;
+        continue;
+      }
+
+      // Collect all downhill neighbors with their slopes
+      const candidates: number[] = [];
+      const weights: number[] = [];
+      let totalWeight = 0;
 
       for (let d = 0; d < 8; d++) {
         const nx = x + DX[d];
@@ -177,13 +191,32 @@ export function computeCoarseDrainage(
         if (nx < 0 || nx >= w || nz < 0 || nz >= h) continue;
         const ni = nz * w + nx;
         const slope = (hc - grid[ni]) / (DIST[d] * cellSize);
-        if (slope > bestSlope) {
-          bestSlope = slope;
-          bestRecv = ni;
+        if (slope > 0.0001) {
+          candidates.push(ni);
+          const w_d = slope * slope; // weight by slope² for moderate focusing
+          weights.push(w_d);
+          totalWeight += w_d;
         }
       }
-      // Fallback: if no downhill neighbor found, self-receive (pit)
-      receiver[idx] = bestRecv >= 0 ? bestRecv : idx;
+
+      if (candidates.length === 0) {
+        receiver[idx] = idx; // pit
+        continue;
+      }
+
+      // Deterministic pseudo-random selection weighted by slope²
+      // Hash based on cell position for reproducibility
+      const hash = ((idx * 2654435761) >>> 0) / 4294967296; // 0-1
+      let cumWeight = 0;
+      let chosen = candidates[candidates.length - 1];
+      for (let c = 0; c < candidates.length; c++) {
+        cumWeight += weights[c] / totalWeight;
+        if (hash < cumWeight) {
+          chosen = candidates[c];
+          break;
+        }
+      }
+      receiver[idx] = chosen;
     }
   }
 
