@@ -862,6 +862,22 @@ if (isBenchmark) {
     console.log(`[benchmark] capture complete (${stage})`);
   };
 
+  // Auto-capture on load: ?capture=label triggers benchmark capture after rendering stabilizes
+  const captureLabel = params.get('capture');
+  if (captureLabel) {
+    (async () => {
+      // Wait for rendering to stabilize
+      console.log(`[auto-capture] waiting for render to stabilize...`);
+      await new Promise(r => setTimeout(r, 3000));
+      app.update();
+      await new Promise(r => setTimeout(r, 1000));
+      console.log(`[auto-capture] triggering capture: ${captureLabel}`);
+      await (window as any).__benchmarkCapture(captureLabel);
+      console.log(`[auto-capture] done`);
+      document.title = `VAST — Captured: ${captureLabel}`;
+    })();
+  }
+
   /** Stage-isolation diagnostics: re-bake and capture after each pipeline stage */
   (window as any).__benchmarkDiagnostics = async function() {
     const { createReferenceBenchmarkHeightfield, BENCHMARK_EROSION } = await import('./engine/terrain/benchmarkHeightfield');

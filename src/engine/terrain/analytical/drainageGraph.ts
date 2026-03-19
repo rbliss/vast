@@ -191,55 +191,96 @@ export function generateGuidanceFields(
   const valleyWidth = new Float32Array(n);
   const valleyDepth = new Float32Array(n);
 
-  // Rasterize graph EDGES (not isolated nodes) to create continuous valley corridors.
-  // For each edge, walk from source to target and stamp a width-profile along the path.
+  // AE2.2: Distance-field rasterization
+  // Step 1: For each cell, find its nearest point on any graph edge.
+  //         Record distance, nearest edge's area, and hierarchy level.
+  // Step 2: Derive valley profile from the distance field.
+  // This replaces per-step stamping and produces smooth, continuous valleys.
+
+  // Build edge segments for efficient distance queries
+  interface EdgeSeg { x1: number; z1: number; x2: number; z2: number; area: number; level: number; }
+  const segments: EdgeSeg[] = [];
   for (const edge of graph.edges) {
     const src = graph.nodes[edge.from];
     const dst = graph.nodes[edge.to];
-
-    // Interpolate along the edge
+    // Subdivide long edges for better distance accuracy
     const edgeDx = dst.x - src.x;
     const edgeDz = dst.z - src.z;
     const edgeLen = Math.sqrt(edgeDx * edgeDx + edgeDz * edgeDz);
     if (edgeLen < 0.5) continue;
+    const subdivs = Math.max(1, Math.ceil(edgeLen / 3));
+    for (let s = 0; s < subdivs; s++) {
+      const t0 = s / subdivs, t1 = (s + 1) / subdivs;
+      segments.push({
+        x1: src.x + edgeDx * t0, z1: src.z + edgeDz * t0,
+        x2: src.x + edgeDx * t1, z2: src.z + edgeDz * t1,
+        area: src.area + (dst.area - src.area) * (t0 + t1) * 0.5,
+        level: edge.level,
+      });
+    }
+  }
 
-    const steps = Math.max(1, Math.ceil(edgeLen));
-    for (let s = 0; s <= steps; s++) {
-      const t = s / steps;
-      const px = src.x + edgeDx * t;
-      const pz = src.z + edgeDz * t;
-      const pArea = src.area + (dst.area - src.area) * t;
+  // Build spatial grid for fast segment lookup
+  const bucketSize = 16; // cells per bucket
+  const bw = Math.ceil(w / bucketSize), bh = Math.ceil(h / bucketSize);
+  const buckets: number[][] = new Array(bw * bh);
+  for (let i = 0; i < buckets.length; i++) buckets[i] = [];
 
-      // Valley width and depth scale with area along the edge
-      const width = Math.min(10, 1.5 + Math.pow(pArea / 1000, 0.25) * 2.5) * cellSize;
-      const depth = Math.min(35, 2 + Math.pow(pArea / 500, 0.35) * 6);
-      const levelScale = edge.level <= 1 ? 1.0 : edge.level === 2 ? 0.6 : 0.35;
+  const maxSearchDist = 12; // cells — max valley half-width
+  for (let si = 0; si < segments.length; si++) {
+    const seg = segments[si];
+    const minBX = Math.max(0, Math.floor((Math.min(seg.x1, seg.x2) - maxSearchDist) / bucketSize));
+    const maxBX = Math.min(bw - 1, Math.floor((Math.max(seg.x1, seg.x2) + maxSearchDist) / bucketSize));
+    const minBZ = Math.max(0, Math.floor((Math.min(seg.z1, seg.z2) - maxSearchDist) / bucketSize));
+    const maxBZ = Math.min(bh - 1, Math.floor((Math.max(seg.z1, seg.z2) + maxSearchDist) / bucketSize));
+    for (let bz = minBZ; bz <= maxBZ; bz++) {
+      for (let bx = minBX; bx <= maxBX; bx++) {
+        buckets[bz * bw + bx].push(si);
+      }
+    }
+  }
 
-      const radiusCells = Math.ceil(width / cellSize) + 1;
-      const cx = Math.round(px), cz = Math.round(pz);
+  // For each raster cell, find nearest segment via spatial grid
+  for (let z = 0; z < h; z++) {
+    for (let x = 0; x < w; x++) {
+      const idx = z * w + x;
+      const bx = Math.floor(x / bucketSize), bz = Math.floor(z / bucketSize);
+      const bucket = buckets[bz * bw + bx];
 
-      for (let dz = -radiusCells; dz <= radiusCells; dz++) {
-        for (let dx = -radiusCells; dx <= radiusCells; dx++) {
-          const nx = cx + dx, nz = cz + dz;
-          if (nx < 0 || nx >= w || nz < 0 || nz >= h) continue;
+      let bestDist = Infinity;
+      let bestArea = 0;
+      let bestLevel = 3;
 
-          const ni = nz * w + nx;
-          const dist = Math.sqrt(dx * dx + dz * dz) * cellSize;
+      for (const si of bucket) {
+        const seg = segments[si];
+        const dx = seg.x2 - seg.x1, dz = seg.z2 - seg.z1;
+        const len2 = dx * dx + dz * dz;
+        let t = len2 > 0 ? ((x - seg.x1) * dx + (z - seg.z1) * dz) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        const px = seg.x1 + dx * t, pz = seg.z1 + dz * t;
+        const dist = Math.sqrt((x - px) * (x - px) + (z - pz) * (z - pz)) * cellSize;
 
-          if (dist < distToChannel[ni]) distToChannel[ni] = dist;
-
-          if (dist < width) {
-            const dt = dist / width;
-            const profileStrength = 1 - dt * dt; // quadratic V-profile
-            const strength = profileStrength * levelScale;
-
-            if (strength > channelStrength[ni]) {
-              channelStrength[ni] = strength;
-              valleyWidth[ni] = width;
-              valleyDepth[ni] = depth * profileStrength;
-            }
-          }
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestArea = seg.area;
+          bestLevel = seg.level;
         }
+      }
+
+      distToChannel[idx] = bestDist;
+
+      // Derive valley profile from distance field
+      const width = Math.min(10, 1.5 + Math.pow(bestArea / 1000, 0.25) * 2.5) * cellSize;
+      const depth = Math.min(30, 2 + Math.pow(bestArea / 500, 0.35) * 5);
+      const levelScale = bestLevel <= 1 ? 1.0 : bestLevel === 2 ? 0.55 : 0.25;
+
+      if (bestDist < width) {
+        const t = bestDist / width;
+        // Smooth valley cross-section: smoothstep for rounder profile
+        const profile = 1 - t * t * (3 - 2 * t);
+        channelStrength[idx] = profile * levelScale;
+        valleyWidth[idx] = width;
+        valleyDepth[idx] = depth * profile * levelScale;
       }
     }
   }
