@@ -125,37 +125,20 @@ if (isTestEnv) {
   const { createReferenceBenchmarkHeightfield } = await import('./engine/terrain/benchmarkHeightfield');
   const benchHF = createReferenceBenchmarkHeightfield();
 
-  // Use benchmark-specific erosion config (H2.1c: no longer borrows from chain preset)
-  const { BENCHMARK_EROSION } = await import('./engine/terrain/benchmarkHeightfield');
-  const { MACRO_PRESETS } = await import('./engine/terrain/macroTerrain');
-  const bakeRequest = {
-    macro: MACRO_PRESETS['chain'], // macro config only used as fallback base — grid is pre-sampled
-    erosion: BENCHMARK_EROSION,
-  };
+  // AE1a: Run analytical coarse prepass (fast — no full bake on startup)
+  const { DEFAULT_ANALYTICAL_PREPASS } = await import('./engine/terrain/analytical/types');
+  const { runAnalyticalPrepass } = await import('./engine/terrain/analytical/coarsePrepass');
 
-  // Run production bake pipeline with benchmark grid as starting point
-  const { runBake } = await import('./engine/bake/terrainBakeManager');
-  const { BakedTerrainSource } = await import('./engine/bake/bakedTerrainSource');
-  const { MacroTerrainSource } = await import('./engine/terrain/macroTerrain');
-  const { domainFromBakeMetadata } = await import('./engine/bake/terrainDomain');
+  setStartupStatus('Running analytical prepass...');
+  const prepassConfig = { ...DEFAULT_ANALYTICAL_PREPASS };
+  runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, prepassConfig);
 
-  const artifacts = await runBake(bakeRequest, (progress) => {
-    const elapsed = `${Math.round(progress.elapsedMs / 100) / 10}s`;
-    const stageLabels: Record<string, string> = {
-      'sampling': 'Loading benchmark',
-      'stream-power': 'Eroding channels',
-      'fan-deposition': 'Building fans',
-      'thermal': 'Relaxing slopes',
-      'packaging': 'Packaging results',
-    };
-    const label = stageLabels[progress.stage] || progress.stage;
-    setStartupStatus(`Benchmark bake: ${label}\n${progress.stageIndex + 1}/${progress.totalStages} · ${elapsed}`);
-  }, benchHF.grid);
-
-  // Use the benchmark heightfield as the "base" for BakedTerrainSource fallback
-  terrainSource = new BakedTerrainSource(benchHF, artifacts);
-  bakeArtifacts = artifacts;
-  terrainDomain = domainFromBakeMetadata(artifacts.metadata, 256, false);
+  // Prepass-only mode: use the prepass result directly as terrain source (no full bake)
+  // The prepass modifies benchHF.grid in place — use it as the terrain source
+  terrainSource = benchHF;
+  bakeArtifacts = null;
+  const { defaultDomain } = await import('./engine/bake/terrainDomain');
+  terrainDomain = defaultDomain(800);
 } else {
   // Blank canvas: use editable heightfield (no bake)
   const { EditableHeightfield } = await import('./engine/terrain/editableHeightfield');
@@ -409,6 +392,13 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
       const { domainFromBakeMetadata } = await import('./engine/bake/terrainDomain');
 
       const benchHF = createReferenceBenchmarkHeightfield();
+
+      // Run analytical prepass before full bake
+      const { DEFAULT_ANALYTICAL_PREPASS } = await import('./engine/terrain/analytical/types');
+      const { runAnalyticalPrepass } = await import('./engine/terrain/analytical/coarsePrepass');
+      shell.statusText = 'Running analytical prepass...';
+      runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, DEFAULT_ANALYTICAL_PREPASS);
+
       const erosionCfg = {
         ...BENCHMARK_EROSION,
         streamPower: {
