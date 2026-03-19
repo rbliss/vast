@@ -78,13 +78,39 @@ export function runAnalyticalPrepass(
   console.log(`[analytical] depressions filled on ${coarseSize}² grid`);
 
   // ── Step 3: Fixed-point coupling loop ──
+  // AE1a.7: Extract channel tree from MFD accumulation, solve strongly on-tree
+  const n = coarseSize * coarseSize;
+  // AE1a.7: much more selective — need ~200 coarse cells (~5% of tableland)
+  const channelThreshold = 200 * coarseCellSize * coarseCellSize;
+
   for (let fp = 0; fp < config.fixedPointIterations; fp++) {
-    // 3a. Compute drainage on current coarse grid
+    // 3a. Compute drainage (MFD accumulation + primary receiver)
     const { receiver, area, order } = computeCoarseDrainage(
       coarseGrid, coarseSize, coarseSize, coarseCellSize,
     );
 
-    // 3b. Implicit upstream-ordered elevation solve
+    // 3b. Extract channel tree from MFD accumulation
+    // Cells above threshold are "on-tree" (channel network)
+    const onTree = new Uint8Array(n);
+    let channelCount = 0;
+    for (let i = 0; i < n; i++) {
+      if (area[i] > channelThreshold) {
+        onTree[i] = 1;
+        channelCount++;
+      }
+    }
+
+    // Log diagnostics on first and last iteration
+    if (fp === 0 || fp === config.fixedPointIterations - 1) {
+      let maxArea = 0, outletCount = 0;
+      for (let i = 0; i < n; i++) {
+        if (area[i] > maxArea) maxArea = area[i];
+        if (receiver[i] === i) outletCount++;
+      }
+      console.log(`[analytical] fp=${fp}: channels=${channelCount}/${n} (${(channelCount/n*100).toFixed(1)}%) maxArea=${maxArea.toFixed(0)} outlets=${outletCount} threshold=${channelThreshold.toFixed(0)}`);
+    }
+
+    // 3c. Solve strongly on-tree, weakly off-tree
     implicitElevationSolve(
       coarseGrid, coarseInitial,
       receiver, area, order,
@@ -92,10 +118,11 @@ export function runAnalyticalPrepass(
       coarseCellSize,
       config.erosionK, config.areaExponent, config.slopeExponent,
       config.age,
+      onTree, // pass channel mask
     );
 
-    // 3c. Re-fill depressions only every few iterations (expensive)
-    if (fp === 2 || fp === 5) {
+    // 3d. Re-fill depressions periodically
+    if (fp === 2 || fp === 5 || fp === 8) {
       fillDepressions(coarseGrid, coarseSize, coarseSize);
     }
   }

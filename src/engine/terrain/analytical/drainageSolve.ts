@@ -171,16 +171,21 @@ export function computeCoarseDrainage(
   // so we also track the steepest-descent receiver separately.
 
   // First pass: find primary (steepest) receiver for each cell
+  // Non-outlet boundary cells must route INWARD (not self-receive)
   for (let z = 0; z < h; z++) {
     for (let x = 0; x < w; x++) {
       const idx = z * w + x;
-      if (isPreferredOutlet(x, z, w, h)) {
-        receiver[idx] = idx;
+      const isBoundary = x === 0 || x === w - 1 || z === 0 || z === h - 1;
+
+      if (isBoundary && isPreferredOutlet(x, z, w, h)) {
+        receiver[idx] = idx; // true outlet
         continue;
       }
+
       const hc = grid[idx];
-      let bestSlope = 0;
+      let bestSlope = -Infinity;
       let bestRecv = -1;
+
       for (let d = 0; d < 8; d++) {
         const nx = x + DX[d];
         const nz = z + DZ[d];
@@ -192,7 +197,14 @@ export function computeCoarseDrainage(
           bestRecv = ni;
         }
       }
-      receiver[idx] = bestRecv >= 0 ? bestRecv : idx;
+
+      // Non-outlet boundary cells: must route to ANY neighbor (even uphill)
+      // to avoid becoming false outlets. Interior cells: need downhill.
+      if (isBoundary) {
+        receiver[idx] = bestRecv >= 0 ? bestRecv : idx;
+      } else {
+        receiver[idx] = (bestRecv >= 0 && bestSlope > 0) ? bestRecv : idx;
+      }
     }
   }
 
@@ -254,6 +266,11 @@ export function computeCoarseDrainage(
  *
  * Processes downstream → upstream so receiver elevations are known.
  */
+/**
+ * @param onTree - Optional channel mask. If provided, on-tree cells get full
+ *   fluvial erosion, off-tree cells get only weak hillslope lowering.
+ *   This prevents the solve from uniformly lowering everything.
+ */
 export function implicitElevationSolve(
   grid: Float32Array,
   initial: Float32Array,
@@ -264,6 +281,7 @@ export function implicitElevationSolve(
   cellSize: number,
   K: number, m: number, n_exp: number,
   age: number,
+  onTree?: Uint8Array,
 ): void {
   const totalCells = w * h;
 
@@ -272,7 +290,7 @@ export function implicitElevationSolve(
     const idx = order[i];
     const recv = receiver[idx];
 
-    // Skip outlets / boundary cells (receiver = self)
+    // Skip outlets / boundary cells
     if (recv === idx) continue;
 
     // Distance to receiver
@@ -288,22 +306,20 @@ export function implicitElevationSolve(
     const h_init = initial[idx];
     const A = area[idx];
 
-    // Channelized erosion: concentrate incision into drainage paths
-    // Cells with small drainage area get much less erosion (hillslope regime)
-    // Threshold scales with cell size: ~40 coarse cells worth of contributing area
-    const channelThreshold = 40 * cellSize * cellSize; // ~40 coarse cells
-    const channelFraction = Math.min(1.0, Math.pow(A / channelThreshold, 0.8));
+    // On-tree / off-tree erosion strength
+    // On-tree: full fluvial solve — creates the channel backbone
+    // Off-tree: very weak hillslope — preserves mesa interiors
+    const isChannel = onTree ? onTree[idx] === 1 : true;
+    const strengthScale = isChannel ? 1.0 : 0.02; // 50x difference
 
-    // Erosion power term: K * A^m * age, modulated by channel fraction
-    const erosionTerm = K * Math.pow(A, m) * age * (0.05 + 0.95 * channelFraction);
+    // Erosion power term
+    const erosionTerm = K * Math.pow(A, m) * age * strengthScale;
 
     if (Math.abs(n_exp - 1.0) < 0.01) {
-      // Linear slope case: analytical solution
       const factor = erosionTerm / L;
       const h_new = (h_init + factor * h_recv) / (1 + factor);
       grid[idx] = Math.min(h_init, Math.max(h_recv + 0.001, h_new));
     } else {
-      // Nonlinear case: simple iteration
       let h_current = grid[idx];
       for (let iter = 0; iter < 5; iter++) {
         const slope = Math.max(0.001, (h_current - h_recv) / L);
