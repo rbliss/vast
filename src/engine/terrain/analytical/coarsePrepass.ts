@@ -89,28 +89,66 @@ export function runAnalyticalPrepass(
       coarseGrid, coarseSize, coarseSize, coarseCellSize,
     );
 
-    // 3b. Extract channel tree from MFD accumulation
-    // Cells above threshold are "on-tree" (channel network)
-    const onTree = new Uint8Array(n);
+    // 3b. Build channel influence field from MFD accumulation
+    // On-tree cells get full erosion (1.0), nearby cells get tapered
+    // influence based on distance — creates corridor-shaped channels
+    // instead of knife-cut slots. Area also scales corridor width.
+    const channelInfluence = new Float32Array(n);
     let channelCount = 0;
+
+    // First: mark on-tree cells and compute their corridor radius
+    const corridorRadius = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       if (area[i] > channelThreshold) {
-        onTree[i] = 1;
+        channelInfluence[i] = 1.0;
         channelCount++;
+        // Corridor width scales with drainage area (bigger channels = wider valleys)
+        corridorRadius[i] = Math.min(8, 1.5 + Math.pow(area[i] / channelThreshold, 0.3) * 2);
       }
     }
 
-    // Log diagnostics on first and last iteration
+    // Second: spread influence to nearby cells (distance-weighted corridor)
+    for (let z = 0; z < coarseSize; z++) {
+      for (let x = 0; x < coarseSize; x++) {
+        const idx = z * coarseSize + x;
+        if (channelInfluence[idx] >= 1.0) continue; // already on-tree
+
+        // Check neighbors in a radius for channel cells
+        let bestInfluence = 0;
+        const searchR = 6;
+        for (let dz = -searchR; dz <= searchR; dz++) {
+          for (let dx = -searchR; dx <= searchR; dx++) {
+            const nz = z + dz, nx = x + dx;
+            if (nz < 0 || nz >= coarseSize || nx < 0 || nx >= coarseSize) continue;
+            const ni = nz * coarseSize + nx;
+            if (channelInfluence[ni] < 1.0) continue; // not a channel cell
+
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            const radius = corridorRadius[ni];
+            if (dist < radius) {
+              // Smooth falloff: 1.0 at channel center, 0 at radius edge
+              const t = dist / radius;
+              const influence = (1 - t * t) * 0.6; // quadratic falloff, max 0.6 in corridor
+              if (influence > bestInfluence) bestInfluence = influence;
+            }
+          }
+        }
+        channelInfluence[idx] = bestInfluence;
+      }
+    }
+
+    // Log diagnostics
     if (fp === 0 || fp === config.fixedPointIterations - 1) {
-      let maxArea = 0, outletCount = 0;
+      let maxArea = 0, outletCount = 0, corridorCount = 0;
       for (let i = 0; i < n; i++) {
         if (area[i] > maxArea) maxArea = area[i];
         if (receiver[i] === i) outletCount++;
+        if (channelInfluence[i] > 0.01) corridorCount++;
       }
-      console.log(`[analytical] fp=${fp}: channels=${channelCount}/${n} (${(channelCount/n*100).toFixed(1)}%) maxArea=${maxArea.toFixed(0)} outlets=${outletCount} threshold=${channelThreshold.toFixed(0)}`);
+      console.log(`[analytical] fp=${fp}: channels=${channelCount} corridors=${corridorCount}/${n} (${(corridorCount/n*100).toFixed(1)}%) maxArea=${maxArea.toFixed(0)} outlets=${outletCount}`);
     }
 
-    // 3c. Solve strongly on-tree, weakly off-tree
+    // 3c. Solve with channel influence field
     implicitElevationSolve(
       coarseGrid, coarseInitial,
       receiver, area, order,
@@ -118,7 +156,7 @@ export function runAnalyticalPrepass(
       coarseCellSize,
       config.erosionK, config.areaExponent, config.slopeExponent,
       config.age,
-      onTree, // pass channel mask
+      channelInfluence,
     );
 
     // 3d. Re-fill depressions periodically
@@ -127,8 +165,11 @@ export function runAnalyticalPrepass(
     }
   }
 
-  // ── Step 4: Light smoothing (artifact reduction only) ──
-  for (let s = 0; s < config.smoothingPasses; s++) {
+  // ── Step 4: Channel-aware smoothing ──
+  // Stronger smoothing near channel edges (reduce stair-step walls),
+  // lighter smoothing on mesa interiors (preserve flat caps).
+  // Use the last computed channel influence field for guidance.
+  for (let s = 0; s < config.smoothingPasses + 2; s++) {
     const tmp = new Float32Array(coarseGrid);
     for (let z = 1; z < coarseSize - 1; z++) {
       for (let x = 1; x < coarseSize - 1; x++) {
@@ -137,7 +178,9 @@ export function runAnalyticalPrepass(
           tmp[idx - 1] + tmp[idx + 1] +
           tmp[idx - coarseSize] + tmp[idx + coarseSize]
         ) / 4;
-        coarseGrid[idx] = tmp[idx] * 0.75 + avg * 0.25;
+        // Stronger smoothing near channel edges, lighter on mesa
+        const smoothStrength = 0.15 + 0.25 * Math.min(1, Math.abs(coarseGrid[idx] - avg) / 3);
+        coarseGrid[idx] = tmp[idx] * (1 - smoothStrength) + avg * smoothStrength;
       }
     }
   }

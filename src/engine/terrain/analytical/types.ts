@@ -29,8 +29,8 @@ export const DEFAULT_ANALYTICAL_PREPASS: AnalyticalPrepassConfig = {
   enabled: true,
   coarseGridSize: 512,         // AE1a.6: higher res — preserve rim hollows better
   fixedPointIterations: 10,
-  age: 15.0,                 // AE1a.7: strong enough to carve visible channels
-  erosionK: 0.02,            // AE1a.7: visible but not over-carved
+  age: 8.0,                  // AE1a.8: moderate — visible channels without cutting through
+  erosionK: 0.012,           // AE1a.8: moderate K
   areaExponent: 0.4,
   slopeExponent: 1.3,        // AE1a.3: focusing slope exponent — concentrates channels
   blendStrength: 0.85,       // AE1a.3: strong direct blend

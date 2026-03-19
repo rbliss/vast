@@ -267,9 +267,9 @@ export function computeCoarseDrainage(
  * Processes downstream → upstream so receiver elevations are known.
  */
 /**
- * @param onTree - Optional channel mask. If provided, on-tree cells get full
- *   fluvial erosion, off-tree cells get only weak hillslope lowering.
- *   This prevents the solve from uniformly lowering everything.
+ * @param channelInfluence - Optional continuous field [0,1]. 1.0 = on channel tree,
+ *   0.6-0.0 = tapered corridor around channels, 0.0 = mesa interior.
+ *   Controls erosion strength per cell for corridor-shaped channel profiles.
  */
 export function implicitElevationSolve(
   grid: Float32Array,
@@ -281,7 +281,7 @@ export function implicitElevationSolve(
   cellSize: number,
   K: number, m: number, n_exp: number,
   age: number,
-  onTree?: Uint8Array,
+  channelInfluence?: Float32Array,
 ): void {
   const totalCells = w * h;
 
@@ -306,11 +306,11 @@ export function implicitElevationSolve(
     const h_init = initial[idx];
     const A = area[idx];
 
-    // On-tree / off-tree erosion strength
-    // On-tree: full fluvial solve — creates the channel backbone
-    // Off-tree: very weak hillslope — preserves mesa interiors
-    const isChannel = onTree ? onTree[idx] === 1 : true;
-    const strengthScale = isChannel ? 1.0 : 0.02; // 50x difference
+    // Channel influence controls erosion strength
+    // 1.0 = on-tree (full fluvial), 0.0 = mesa interior (minimal)
+    // Intermediate values create tapered corridor profiles
+    const influence = channelInfluence ? channelInfluence[idx] : 1.0;
+    const strengthScale = 0.02 + 0.98 * influence; // 2% base + 98% channel-driven
 
     // Erosion power term
     const erosionTerm = K * Math.pow(A, m) * age * strengthScale;
