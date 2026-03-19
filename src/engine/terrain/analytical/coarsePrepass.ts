@@ -92,7 +92,7 @@ export function runAnalyticalPrepass(
     // 3b. Build hierarchical channel influence field
     // Two tiers: primary trunks (wide, strong) and secondary tributaries (narrow, moderate)
     const channelInfluence = new Float32Array(n);
-    const secondaryThreshold = channelThreshold * 0.15; // ~30 coarse cells
+    const secondaryThreshold = channelThreshold * 0.08; // ~16 coarse cells — more tributaries
     let primaryCount = 0, secondaryCount = 0;
 
     // Mark channel cells and compute corridor radius based on hierarchy
@@ -173,8 +173,8 @@ export function runAnalyticalPrepass(
   }
 
   // ── Step 4: Direction-aware smoothing ──
-  // Smooth more ACROSS channel walls (reduce stair-stepping) than ALONG channels
-  // (preserve incision length). Uses local gradient to determine channel direction.
+  // Smooth more ACROSS channel walls than ALONG channels.
+  // Symmetric sampling in both directions for even results.
   for (let s = 0; s < config.smoothingPasses + 2; s++) {
     const tmp = new Float32Array(coarseGrid);
     for (let z = 2; z < coarseSize - 2; z++) {
@@ -192,24 +192,25 @@ export function runAnalyticalPrepass(
           const avg = (tmp[idx - 1] + tmp[idx + 1] + tmp[idx - coarseSize] + tmp[idx + coarseSize]) / 4;
           coarseGrid[idx] = hc * 0.85 + avg * 0.15;
         } else {
-          // Directional smoothing: strong across gradient (channel walls), weak along
-          // Perpendicular to gradient = across channel walls
-          const px = -gz / gradLen, pz = gx / gradLen;
+          // Normalized gradient and perpendicular directions
+          const ax = gx / gradLen, az = gz / gradLen; // along-channel unit vector
+          const px = -az, pz = ax;                     // across-channel unit vector
 
-          // Sample along perpendicular direction (across walls)
-          const crossAvg = (
-            tmp[idx + Math.round(px) + Math.round(pz) * coarseSize] +
-            tmp[idx - Math.round(px) - Math.round(pz) * coarseSize]
-          ) / 2;
+          // Symmetric cross-channel samples (both sides of the wall)
+          const cpx = Math.round(px), cpz = Math.round(pz);
+          const cross1Idx = idx + cpx + cpz * coarseSize;
+          const cross2Idx = idx - cpx - cpz * coarseSize;
+          const crossAvg = (tmp[cross1Idx] + tmp[cross2Idx]) / 2;
 
-          // Sample along gradient direction (along channel)
-          const alongAvg = (
-            tmp[idx + (gx > 0 ? 1 : -1) + (gz > 0 ? coarseSize : -coarseSize)]
-          );
+          // Symmetric along-channel samples (both upstream and downstream)
+          const apx = Math.round(ax), apz = Math.round(az);
+          const along1Idx = idx + apx + apz * coarseSize;
+          const along2Idx = idx - apx - apz * coarseSize;
+          const alongAvg = (tmp[along1Idx] + tmp[along2Idx]) / 2;
 
-          // Blend: strong cross-channel smoothing, weak along-channel
-          const crossStrength = Math.min(0.35, 0.1 + gradLen * 0.3);
-          const alongStrength = 0.05;
+          // Strong cross-channel, weak along-channel
+          const crossStrength = Math.min(0.3, 0.08 + gradLen * 0.25);
+          const alongStrength = 0.04;
 
           coarseGrid[idx] = hc * (1 - crossStrength - alongStrength) +
                             crossAvg * crossStrength +
