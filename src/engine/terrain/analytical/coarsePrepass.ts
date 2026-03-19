@@ -89,63 +89,70 @@ export function runAnalyticalPrepass(
       coarseGrid, coarseSize, coarseSize, coarseCellSize,
     );
 
-    // 3b. Build channel influence field from MFD accumulation
-    // On-tree cells get full erosion (1.0), nearby cells get tapered
-    // influence based on distance — creates corridor-shaped channels
-    // instead of knife-cut slots. Area also scales corridor width.
+    // 3b. Build hierarchical channel influence field
+    // Two tiers: primary trunks (wide, strong) and secondary tributaries (narrow, moderate)
     const channelInfluence = new Float32Array(n);
-    let channelCount = 0;
+    const secondaryThreshold = channelThreshold * 0.15; // ~30 coarse cells
+    let primaryCount = 0, secondaryCount = 0;
 
-    // First: mark on-tree cells and compute their corridor radius
+    // Mark channel cells and compute corridor radius based on hierarchy
     const corridorRadius = new Float32Array(n);
+    const channelStrength = new Float32Array(n); // 1.0 = primary, 0.6 = secondary
     for (let i = 0; i < n; i++) {
       if (area[i] > channelThreshold) {
+        // Primary trunk
         channelInfluence[i] = 1.0;
-        channelCount++;
-        // Corridor width scales with drainage area (bigger channels = wider valleys)
-        corridorRadius[i] = Math.min(8, 1.5 + Math.pow(area[i] / channelThreshold, 0.3) * 2);
+        channelStrength[i] = 1.0;
+        corridorRadius[i] = Math.min(7, 2.0 + Math.pow(area[i] / channelThreshold, 0.25) * 2);
+        primaryCount++;
+      } else if (area[i] > secondaryThreshold) {
+        // Secondary tributary
+        channelInfluence[i] = 0.65;
+        channelStrength[i] = 0.65;
+        corridorRadius[i] = Math.min(4, 1.0 + Math.pow(area[i] / secondaryThreshold, 0.3));
+        secondaryCount++;
       }
     }
 
-    // Second: spread influence to nearby cells (distance-weighted corridor)
+    // Spread corridor influence from both tiers
     for (let z = 0; z < coarseSize; z++) {
       for (let x = 0; x < coarseSize; x++) {
         const idx = z * coarseSize + x;
-        if (channelInfluence[idx] >= 1.0) continue; // already on-tree
+        if (channelInfluence[idx] >= 0.5) continue; // already a channel cell
 
-        // Check neighbors in a radius for channel cells
         let bestInfluence = 0;
-        const searchR = 6;
+        const searchR = 5;
         for (let dz = -searchR; dz <= searchR; dz++) {
           for (let dx = -searchR; dx <= searchR; dx++) {
             const nz = z + dz, nx = x + dx;
             if (nz < 0 || nz >= coarseSize || nx < 0 || nx >= coarseSize) continue;
             const ni = nz * coarseSize + nx;
-            if (channelInfluence[ni] < 1.0) continue; // not a channel cell
+            if (channelStrength[ni] < 0.1) continue;
 
             const dist = Math.sqrt(dx * dx + dz * dz);
             const radius = corridorRadius[ni];
             if (dist < radius) {
-              // Smooth falloff: 1.0 at channel center, 0 at radius edge
               const t = dist / radius;
-              const influence = (1 - t * t) * 0.6; // quadratic falloff, max 0.6 in corridor
+              const influence = channelStrength[ni] * (1 - t * t) * 0.5;
               if (influence > bestInfluence) bestInfluence = influence;
             }
           }
         }
-        channelInfluence[idx] = bestInfluence;
+        if (bestInfluence > channelInfluence[idx]) {
+          channelInfluence[idx] = bestInfluence;
+        }
       }
     }
 
     // Log diagnostics
     if (fp === 0 || fp === config.fixedPointIterations - 1) {
-      let maxArea = 0, outletCount = 0, corridorCount = 0;
+      let maxArea = 0, outletCount = 0, influencedCount = 0;
       for (let i = 0; i < n; i++) {
         if (area[i] > maxArea) maxArea = area[i];
         if (receiver[i] === i) outletCount++;
-        if (channelInfluence[i] > 0.01) corridorCount++;
+        if (channelInfluence[i] > 0.01) influencedCount++;
       }
-      console.log(`[analytical] fp=${fp}: channels=${channelCount} corridors=${corridorCount}/${n} (${(corridorCount/n*100).toFixed(1)}%) maxArea=${maxArea.toFixed(0)} outlets=${outletCount}`);
+      console.log(`[analytical] fp=${fp}: primary=${primaryCount} secondary=${secondaryCount} influenced=${influencedCount}/${n} (${(influencedCount/n*100).toFixed(1)}%) maxArea=${maxArea.toFixed(0)} outlets=${outletCount}`);
     }
 
     // 3c. Solve with channel influence field
@@ -165,22 +172,49 @@ export function runAnalyticalPrepass(
     }
   }
 
-  // ── Step 4: Channel-aware smoothing ──
-  // Stronger smoothing near channel edges (reduce stair-step walls),
-  // lighter smoothing on mesa interiors (preserve flat caps).
-  // Use the last computed channel influence field for guidance.
+  // ── Step 4: Direction-aware smoothing ──
+  // Smooth more ACROSS channel walls (reduce stair-stepping) than ALONG channels
+  // (preserve incision length). Uses local gradient to determine channel direction.
   for (let s = 0; s < config.smoothingPasses + 2; s++) {
     const tmp = new Float32Array(coarseGrid);
-    for (let z = 1; z < coarseSize - 1; z++) {
-      for (let x = 1; x < coarseSize - 1; x++) {
+    for (let z = 2; z < coarseSize - 2; z++) {
+      for (let x = 2; x < coarseSize - 2; x++) {
         const idx = z * coarseSize + x;
-        const avg = (
-          tmp[idx - 1] + tmp[idx + 1] +
-          tmp[idx - coarseSize] + tmp[idx + coarseSize]
-        ) / 4;
-        // Stronger smoothing near channel edges, lighter on mesa
-        const smoothStrength = 0.15 + 0.25 * Math.min(1, Math.abs(coarseGrid[idx] - avg) / 3);
-        coarseGrid[idx] = tmp[idx] * (1 - smoothStrength) + avg * smoothStrength;
+        const hc = tmp[idx];
+
+        // Local gradient (channel runs along gradient direction)
+        const gx = (tmp[idx + 1] - tmp[idx - 1]) * 0.5;
+        const gz = (tmp[idx + coarseSize] - tmp[idx - coarseSize]) * 0.5;
+        const gradLen = Math.sqrt(gx * gx + gz * gz);
+
+        if (gradLen < 0.01) {
+          // Flat area: isotropic light smoothing
+          const avg = (tmp[idx - 1] + tmp[idx + 1] + tmp[idx - coarseSize] + tmp[idx + coarseSize]) / 4;
+          coarseGrid[idx] = hc * 0.85 + avg * 0.15;
+        } else {
+          // Directional smoothing: strong across gradient (channel walls), weak along
+          // Perpendicular to gradient = across channel walls
+          const px = -gz / gradLen, pz = gx / gradLen;
+
+          // Sample along perpendicular direction (across walls)
+          const crossAvg = (
+            tmp[idx + Math.round(px) + Math.round(pz) * coarseSize] +
+            tmp[idx - Math.round(px) - Math.round(pz) * coarseSize]
+          ) / 2;
+
+          // Sample along gradient direction (along channel)
+          const alongAvg = (
+            tmp[idx + (gx > 0 ? 1 : -1) + (gz > 0 ? coarseSize : -coarseSize)]
+          );
+
+          // Blend: strong cross-channel smoothing, weak along-channel
+          const crossStrength = Math.min(0.35, 0.1 + gradLen * 0.3);
+          const alongStrength = 0.05;
+
+          coarseGrid[idx] = hc * (1 - crossStrength - alongStrength) +
+                            crossAvg * crossStrength +
+                            alongAvg * alongStrength;
+        }
       }
     }
   }
