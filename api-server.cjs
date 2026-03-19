@@ -186,6 +186,52 @@ app.get('/api/snapshots', (req, res) => {
   res.json(files);
 });
 
+// List markdown docs (for Docs viewer)
+app.get('/api/docs', (req, res) => {
+  const DOCS_DIRS = [
+    { dir: path.join(__dirname, 'docs'), section: 'docs' },
+    { dir: path.join(__dirname, 'plans'), section: 'plans' },
+  ];
+  const files = [];
+  for (const { dir, section } of DOCS_DIRS) {
+    if (!fs.existsSync(dir)) continue;
+    for (const name of fs.readdirSync(dir).filter(n => /\.md$/i.test(n)).sort()) {
+      const full = path.join(dir, name);
+      const stat = fs.statSync(full);
+      files.push({
+        name,
+        section,
+        path: `/${section}/${name}`,
+        size: stat.size,
+        modified: stat.mtimeMs / 1000,
+      });
+    }
+  }
+  res.json(files);
+});
+
+// Serve markdown file content
+app.get('/api/docs/content', (req, res) => {
+  const filePath = req.query.file;
+  if (!filePath || typeof filePath !== 'string') {
+    return res.status(400).json({ error: 'Missing file parameter' });
+  }
+  // Security: only allow docs/ and plans/ paths, no traversal
+  const clean = filePath.replace(/\.\./g, '').replace(/^\//, '');
+  if (!clean.startsWith('docs/') && !clean.startsWith('plans/')) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  const full = path.join(__dirname, clean);
+  if (!fs.existsSync(full)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+  res.type('text/markdown').send(fs.readFileSync(full, 'utf8'));
+});
+
+// Serve docs/ and plans/ directories as static
+app.use('/docs', express.static(path.join(__dirname, 'docs')));
+app.use('/plans', express.static(path.join(__dirname, 'plans')));
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[api] Screenshot API on http://0.0.0.0:${PORT}`);
   console.log(`[api] Screenshots → ${VERIFICATION_DIR}`);

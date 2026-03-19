@@ -24,6 +24,7 @@ export default defineConfig({
       input: {
         main: 'index.html',
         references: 'references.html',
+        docs: 'docs.html',
       },
     },
   },

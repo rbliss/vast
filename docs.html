@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VAST — Docs</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a1e; color: #ccc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow: hidden; }
+
+    .docs-layout {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      grid-template-rows: 44px 1fr;
+      height: 100vh;
+    }
+
+    /* Top bar */
+    .docs-topbar {
+      grid-column: 1 / -1;
+      background: rgba(20,20,22,0.95);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 16px;
+    }
+    .docs-topbar .logo { color: #eee; font: bold 14px/1 monospace; letter-spacing: 1px; }
+    .docs-topbar a {
+      color: #8ab; text-decoration: none; font: 12px/1 monospace;
+      padding: 4px 10px; border-radius: 4px; transition: background 0.15s;
+    }
+    .docs-topbar a:hover { background: rgba(255,255,255,0.08); }
+    .docs-topbar a.active { background: rgba(100,140,200,0.3); color: #adf; }
+    .docs-topbar .spacer { flex: 1; }
+    .docs-topbar .breadcrumb { color: #889; font: 11px/1 monospace; }
+
+    /* Sidebar */
+    .docs-sidebar {
+      background: rgba(22,22,26,0.95);
+      border-right: 1px solid rgba(255,255,255,0.06);
+      overflow-y: auto;
+      padding: 12px 0;
+    }
+    .docs-sidebar .section-label {
+      color: #667;
+      font: bold 10px/1 monospace;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 12px 16px 6px;
+    }
+    .docs-sidebar .doc-item {
+      display: block;
+      padding: 7px 16px;
+      color: #aab;
+      font: 12px/1.3 monospace;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.1s;
+      border-left: 3px solid transparent;
+      word-break: break-all;
+    }
+    .docs-sidebar .doc-item:hover { background: rgba(255,255,255,0.04); }
+    .docs-sidebar .doc-item.selected {
+      background: rgba(100,140,200,0.12);
+      border-left-color: rgba(100,160,255,0.6);
+      color: #cde;
+    }
+    .docs-sidebar .doc-size {
+      color: #556;
+      font-size: 10px;
+      margin-left: 4px;
+    }
+
+    /* Filter */
+    .docs-filter {
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .docs-filter input {
+      width: 100%;
+      background: rgba(30,30,35,0.8);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 4px;
+      padding: 6px 10px;
+      color: #ccc;
+      font: 12px/1 monospace;
+      outline: none;
+    }
+    .docs-filter input:focus { border-color: rgba(100,160,255,0.4); }
+    .docs-filter input::placeholder { color: #556; }
+
+    /* Main content */
+    .docs-content {
+      overflow-y: auto;
+      padding: 32px 48px 64px;
+      background: #1e1e22;
+    }
+
+    /* Markdown rendering */
+    .docs-content .md {
+      max-width: 800px;
+      line-height: 1.7;
+      color: #ccd;
+    }
+    .md h1 { font-size: 28px; color: #eef; margin: 0 0 24px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    .md h2 { font-size: 22px; color: #dde; margin: 32px 0 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .md h3 { font-size: 17px; color: #ccd; margin: 24px 0 8px; }
+    .md h4 { font-size: 14px; color: #bbc; margin: 20px 0 6px; }
+    .md p { margin: 0 0 12px; }
+    .md ul, .md ol { margin: 0 0 12px; padding-left: 24px; }
+    .md li { margin: 4px 0; }
+    .md li > ul, .md li > ol { margin: 4px 0 4px; }
+    .md a { color: #8bf; text-decoration: none; }
+    .md a:hover { text-decoration: underline; }
+    .md strong { color: #eef; }
+    .md em { color: #aab; font-style: italic; }
+    .md blockquote {
+      border-left: 3px solid rgba(100,160,255,0.4);
+      padding: 8px 16px;
+      margin: 12px 0;
+      background: rgba(100,160,255,0.05);
+      color: #aab;
+    }
+    .md code {
+      background: rgba(255,255,255,0.06);
+      padding: 2px 5px;
+      border-radius: 3px;
+      font: 13px/1.4 monospace;
+      color: #dda;
+    }
+    .md pre {
+      background: rgba(10,10,14,0.8);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 6px;
+      padding: 16px;
+      margin: 12px 0;
+      overflow-x: auto;
+    }
+    .md pre code {
+      background: none;
+      padding: 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #bbc;
+    }
+    .md hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 24px 0; }
+    .md table { border-collapse: collapse; margin: 12px 0; width: 100%; }
+    .md th, .md td { border: 1px solid rgba(255,255,255,0.1); padding: 8px 12px; text-align: left; font-size: 13px; }
+    .md th { background: rgba(255,255,255,0.04); color: #dde; }
+
+    .docs-empty {
+      color: #556;
+      font: 14px/1.6 monospace;
+      text-align: center;
+      padding: 80px 20px;
+    }
+  </style>
+</head>
+<body>
+  <div id="docs-app" class="docs-layout"></div>
+  <script type="module" src="/src/docs.ts"></script>
+</body>
+</html>

@@ -105,8 +105,8 @@ function runBakeInWorker(
 
     const timeout = setTimeout(() => {
       worker.terminate();
-      reject(new Error('Bake worker timed out (60s)'));
-    }, 60000);
+      reject(new Error('Bake worker timed out (300s)'));
+    }, 300000);
 
     worker.onmessage = (e: MessageEvent) => {
       const msg = e.data;
