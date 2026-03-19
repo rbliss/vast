@@ -52,6 +52,7 @@ export function applyChannelGeometry(
   cellSize: number,
   params: ChannelGeometryParams = DEFAULT_CHANNEL_PARAMS,
   resistance?: Float32Array,
+  guidanceWidth?: Float32Array,
 ): void {
   const n = w * h;
 
@@ -75,7 +76,13 @@ export function applyChannelGeometry(
     const depth = params.depthCoeff * Math.pow(effectiveArea, params.depthExponent) * R;
 
     const maxHalfWidthCells = params.maxHalfWidth / cellSize; // world→cells
-    const halfWidthCells = Math.min(maxHalfWidthCells, widthWorld / cellSize);
+    let halfWidthCells = Math.min(maxHalfWidthCells, widthWorld / cellSize);
+
+    // AE3.4: Bias width toward AE-predicted valley width where guidance is strong
+    if (guidanceWidth && guidanceWidth[i] > 0) {
+      const guidedHalfWidthCells = guidanceWidth[i] / cellSize * 0.6; // 60% of AE width
+      halfWidthCells = Math.max(halfWidthCells, guidedHalfWidthCells);
+    }
 
     channelDepth[i] = depth;
     channelRadius[i] = halfWidthCells;

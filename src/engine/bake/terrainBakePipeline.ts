@@ -119,7 +119,7 @@ export function executeBake(
   if (spResult) {
     const postChannelResistance = resistanceGen(grid);
     const tChan0 = performance.now();
-    applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize, undefined, postChannelResistance);
+    applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize, undefined, postChannelResistance, aeGuidance?.valleyWidth);
     console.log(`[bake] channel geometry (${(performance.now() - tChan0).toFixed(0)}ms)`);
   }
   logStageDiag('after-channel-geometry', grid, initialGrid);
