@@ -55,23 +55,27 @@ export function computeCoarseDrainage(
     }
   }
 
-  // Topological sort: highest to lowest (upstream order)
-  // Create sorted indices by descending elevation
-  const indices = new Int32Array(n);
-  for (let i = 0; i < n; i++) indices[i] = i;
-  indices.sort((a, b) => grid[b] - grid[a]);
+  // Topological sort: highest to lowest (for area accumulation)
+  const highToLow = new Int32Array(n);
+  for (let i = 0; i < n; i++) highToLow[i] = i;
+  highToLow.sort((a, b) => grid[b] - grid[a]);
 
-  // Accumulate area in upstream order (highest first)
+  // Accumulate area in upstream order (highest first → area flows downstream)
   area.fill(cellSize * cellSize); // each cell starts with its own area (world units)
   for (let i = 0; i < n; i++) {
-    const idx = indices[i];
+    const idx = highToLow[i];
     const recv = receiver[idx];
     if (recv !== idx) {
       area[recv] += area[idx];
     }
   }
 
-  return { receiver, area, order: indices };
+  // Reverse order: lowest to highest (for elevation solve — downstream first)
+  // Each cell's elevation depends on its receiver, so receivers must be solved first.
+  const lowToHigh = new Int32Array(n);
+  for (let i = 0; i < n; i++) lowToHigh[i] = highToLow[n - 1 - i];
+
+  return { receiver, area, order: lowToHigh };
 }
 
 /**
@@ -115,7 +119,7 @@ export function implicitElevationSolve(
 ): void {
   const totalCells = w * h;
 
-  // Process in upstream order (highest first)
+  // Process downstream → upstream (lowest first): each cell's receiver is already resolved
   for (let i = 0; i < totalCells; i++) {
     const idx = order[i];
     const recv = receiver[idx];
