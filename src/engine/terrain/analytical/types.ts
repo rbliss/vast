@@ -28,11 +28,11 @@ export interface AnalyticalPrepassConfig {
 export const DEFAULT_ANALYTICAL_PREPASS: AnalyticalPrepassConfig = {
   enabled: true,
   coarseGridSize: 384,
-  fixedPointIterations: 8,   // AE1a.2: more fp iterations for drainage convergence
-  age: 2.0,                  // AE1a.2: stronger erosion age — assert the drainage skeleton
-  erosionK: 0.002,           // AE1a.2: stronger K — visible incision
+  fixedPointIterations: 10,  // AE1a.3: more iterations for outlet-constrained convergence
+  age: 3.0,                  // AE1a.3: stronger age — deep incision
+  erosionK: 0.003,           // AE1a.3: stronger K
   areaExponent: 0.4,
-  slopeExponent: 1.0,
-  blendStrength: 0.75,       // AE1a.2: direct solved-height blend — stronger influence
-  smoothingPasses: 2,        // AE1a.2: less smoothing — keep the analytical structure
+  slopeExponent: 1.3,        // AE1a.3: focusing slope exponent — concentrates channels
+  blendStrength: 0.85,       // AE1a.3: strong direct blend
+  smoothingPasses: 1,        // AE1a.3: minimal smoothing — keep the analytical structure
 };

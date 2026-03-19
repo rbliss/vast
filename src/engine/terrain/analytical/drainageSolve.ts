@@ -123,8 +123,23 @@ export function fillDepressions(grid: Float32Array, w: number, h: number): void 
 }
 
 /**
+ * Check if a boundary cell is a preferred outlet.
+ * Only cells below a height threshold on the boundary are valid outlets.
+ * This forces drainage to organize toward the lower piedmont instead of
+ * exiting equally through the entire perimeter.
+ */
+function isPreferredOutlet(x: number, z: number, w: number, h: number, grid: Float32Array): boolean {
+  if (x > 0 && x < w - 1 && z > 0 && z < h - 1) return false; // not boundary
+  // Only boundary cells below the median-ish height are outlets
+  // This ensures high escarpment-edge boundary cells route inward
+  const height = grid[z * w + x];
+  return height < 20; // piedmont-level cells are outlets (tableland is ~60+)
+}
+
+/**
  * Compute D8 flow directions and drainage area on the coarse grid.
  * Assumes depressions have been filled (no internal sinks).
+ * Uses preferred outlets — only low boundary cells are valid exits.
  */
 export function computeCoarseDrainage(
   grid: Float32Array, w: number, h: number, cellSize: number,
@@ -139,7 +154,8 @@ export function computeCoarseDrainage(
       const idx = z * w + x;
       const hc = grid[idx];
       let bestSlope = 0;
-      let bestRecv = idx; // self = boundary outlet
+      // Only preferred outlets self-receive; others must route downstream
+      let bestRecv = isPreferredOutlet(x, z, w, h, grid) ? idx : -1;
 
       for (let d = 0; d < 8; d++) {
         const nx = x + DX[d];
@@ -152,7 +168,8 @@ export function computeCoarseDrainage(
           bestRecv = ni;
         }
       }
-      receiver[idx] = bestRecv;
+      // Fallback: if no downhill neighbor found, self-receive (pit)
+      receiver[idx] = bestRecv >= 0 ? bestRecv : idx;
     }
   }
 
@@ -221,14 +238,19 @@ export function implicitElevationSolve(
     const h_init = initial[idx];
     const A = area[idx];
 
-    // Erosion power term: K * A^m * age
-    const erosionTerm = K * Math.pow(A, m) * age;
+    // Channelized erosion: concentrate incision into drainage paths
+    // Cells with small drainage area get much less erosion (hillslope regime)
+    // This prevents uniform sheet lowering and creates organized channels.
+    const channelThreshold = 50.0; // world-area units — below this, mostly hillslope
+    const channelFraction = Math.min(1.0, Math.pow(A / channelThreshold, 0.6));
+
+    // Erosion power term: K * A^m * age, modulated by channel fraction
+    const erosionTerm = K * Math.pow(A, m) * age * (0.05 + 0.95 * channelFraction);
 
     if (Math.abs(n_exp - 1.0) < 0.01) {
       // Linear slope case: analytical solution
       const factor = erosionTerm / L;
       const h_new = (h_init + factor * h_recv) / (1 + factor);
-      // Only erode (lower), enforce h >= h_receiver
       grid[idx] = Math.min(h_init, Math.max(h_recv + 0.001, h_new));
     } else {
       // Nonlinear case: simple iteration
