@@ -157,9 +157,13 @@ app.get('/api/screenshots', (req, res) => {
 app.get('/api/snapshots', (req, res) => {
   const files = fs.readdirSync(VERIFICATION_DIR)
     .filter(n => /\.(png|jpg|jpeg|webp)$/i.test(n))
-    .sort()
-    .reverse() // newest first
     .map(name => {
+      // Pre-read stat for sorting
+      const stat = fs.statSync(path.join(VERIFICATION_DIR, name));
+      return { name, mtimeMs: stat.mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs) // newest first by modification time
+    .map(({ name }) => {
       const full = path.join(VERIFICATION_DIR, name);
       const stat = fs.statSync(full);
       const id = name.replace(/\.[^.]+$/, '');
