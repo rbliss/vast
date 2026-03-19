@@ -66,7 +66,7 @@ export async function runBake(
   // Step 2: Compute (worker preferred)
   let artifacts: TerrainBakeArtifacts;
   try {
-    artifacts = await runBakeInWorker(request, onProgress, preSampledGrid, onStageCapture);
+    artifacts = await runBakeInWorker(request, onProgress, preSampledGrid, onStageCapture, aeChannelStrength);
   } catch (err) {
     console.warn('[bake] worker failed, falling back to main thread:', err);
     artifacts = runBakeOnMainThread(request, preSampledGrid, onStageCapture, aeChannelStrength);
@@ -90,6 +90,7 @@ function runBakeInWorker(
   onProgress?: BakeProgressCallback,
   preSampledGrid?: Float32Array,
   onStageCapture?: StageCaptureHandler,
+  aeChannelStrength?: Float32Array,
 ): Promise<TerrainBakeArtifacts> {
   return new Promise((resolve, reject) => {
     let worker: Worker;
@@ -144,13 +145,18 @@ function runBakeInWorker(
       reject(new Error(`Worker error: ${err.message}`));
     };
 
-    // Send bake request (with optional pre-sampled grid transfer)
+    // Send bake request (with optional pre-sampled grid + AE guidance transfer)
     const workerMsg: any = { type: 'bake', request, captureStages: !!onStageCapture };
     const transfer: Transferable[] = [];
     if (preSampledGrid) {
       const gridCopy = new Float32Array(preSampledGrid);
       workerMsg.preSampledGrid = gridCopy;
       transfer.push(gridCopy.buffer);
+    }
+    if (aeChannelStrength) {
+      const guidanceCopy = new Float32Array(aeChannelStrength);
+      workerMsg.aeChannelStrength = guidanceCopy;
+      transfer.push(guidanceCopy.buffer);
     }
     worker.postMessage(workerMsg, { transfer });
     console.log('[bake] dispatched to worker');

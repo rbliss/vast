@@ -129,12 +129,23 @@ if (isTestEnv) {
   const { DEFAULT_ANALYTICAL_PREPASS } = await import('./engine/terrain/analytical/types');
   const { runAnalyticalPrepass } = await import('./engine/terrain/analytical/coarsePrepass');
 
-  setStartupStatus('Running analytical prepass...');
-  const prepassConfig = { ...DEFAULT_ANALYTICAL_PREPASS };
-  const prepassResult = runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, prepassConfig);
+  // AE3 ablation controls (declared at module scope for rebake handler access)
+  const noPrepass = params.has('noprepass');
+  const noGuidance = params.has('noguidance');
+  (window as any).__ae3NoPrepass = noPrepass;
+  (window as any).__ae3NoGuidance = noGuidance;
+
+  let prepassGuidance: import('./engine/terrain/analytical/coarsePrepass').FullResGuidance | null = null;
+  if (!noPrepass || !noGuidance) {
+    setStartupStatus('Running analytical prepass...');
+    const prepassConfig = { ...DEFAULT_ANALYTICAL_PREPASS };
+    if (noPrepass) prepassConfig.blendStrength = 0; // disable height carving
+    const prepassResult = runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, prepassConfig);
+    if (!noGuidance) prepassGuidance = prepassResult.guidance;
+  }
 
   // Store guidance fields for H2 bake integration
-  (window as any).__aeGuidance = prepassResult.guidance;
+  (window as any).__aeGuidance = prepassGuidance;
 
   // Prepass-only mode: use the prepass result directly as terrain source (no full bake)
   // The prepass modifies benchHF.grid in place — use it as the terrain source
@@ -401,7 +412,9 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
       const { DEFAULT_ANALYTICAL_PREPASS } = await import('./engine/terrain/analytical/types');
       const { runAnalyticalPrepass } = await import('./engine/terrain/analytical/coarsePrepass');
       shell.statusText = 'Running analytical prepass...';
-      const rebakePrepass = runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, DEFAULT_ANALYTICAL_PREPASS);
+      const rebakePrepassCfg = { ...DEFAULT_ANALYTICAL_PREPASS };
+      if ((window as any).__ae3NoPrepass) rebakePrepassCfg.blendStrength = 0;
+      const rebakePrepass = runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, rebakePrepassCfg);
 
       const erosionCfg = {
         ...BENCHMARK_EROSION,
@@ -423,7 +436,7 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
         },
         benchHF.grid,
         undefined, // onStageCapture
-        rebakePrepass.guidance.channelStrength, // AE3 guidance
+        (window as any).__ae3NoGuidance ? undefined : rebakePrepass.guidance.channelStrength, // AE3 guidance
       );
 
       const newSource = new BakedTerrainSource(benchHF, artifacts);

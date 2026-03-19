@@ -12,7 +12,7 @@
  *   Worker → Main: { type: 'error', message }
  */
 
-import { executeBake, type StageCaptureCallback } from './terrainBakePipeline';
+import { executeBake, type StageCaptureCallback, type AEGuidanceFields } from './terrainBakePipeline';
 
 // ── Message handler ──
 
@@ -27,7 +27,17 @@ self.onmessage = (e: MessageEvent) => {
           }
         : undefined;
 
-      const artifacts = executeBake(msg.request, msg.preSampledGrid, onStageCapture);
+      // Build AE guidance if provided
+      const aeGuidance: AEGuidanceFields | undefined = msg.aeChannelStrength
+        ? {
+            channelStrength: msg.aeChannelStrength,
+            distToChannel: new Float32Array(0),
+            valleyWidth: new Float32Array(0),
+            valleyDepth: new Float32Array(0),
+          }
+        : undefined;
+
+      const artifacts = executeBake(msg.request, msg.preSampledGrid, onStageCapture, aeGuidance);
 
       // Transfer large buffers instead of copying
       self.postMessage(
