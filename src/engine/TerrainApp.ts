@@ -933,7 +933,7 @@ export class TerrainApp {
     this.renderer.setSize(w, h);
   }
 
-  async captureFrame(): Promise<string> {
+  async captureFrame(format: 'png' | 'jpeg' = 'jpeg', quality = 0.92): Promise<string> {
     this.controls.update();
     this.updateChunks();
     // Render through presentation pipeline if active, awaiting completion
@@ -942,7 +942,7 @@ export class TerrainApp {
     } else {
       this.renderer.render(this.scene, this.camera);
     }
-    return this.renderer.domElement.toDataURL('image/png');
+    return this.renderer.domElement.toDataURL(`image/${format}`, quality);
   }
 
   getSnapshotState(): Record<string, unknown> {

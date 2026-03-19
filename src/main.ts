@@ -818,54 +818,53 @@ if (isBenchmark) {
     const captureT0 = performance.now();
     console.log(`[benchmark] capturing ${BENCHMARK_CAMERAS.length} views (${stage})`);
 
-    for (let ci = 0; ci < BENCHMARK_CAMERAS.length; ci++) {
-      const viewT0 = performance.now();
-      const cam = BENCHMARK_CAMERAS[ci];
+    // Phase 1: Render all views and collect frames (sequential — needs GPU)
+    const frames: Array<{ image: string; label: string; metadata: Record<string, unknown>; name: string }> = [];
+    const renderT0 = performance.now();
+    for (const cam of BENCHMARK_CAMERAS) {
       const ch = terrainSource.sampleHeight(cam.camX, cam.camZ);
       const th = terrainSource.sampleHeight(cam.tgtX, cam.tgtZ);
       app.camera.position.set(cam.camX, ch + cam.clearance, cam.camZ);
       app.controls.target.set(cam.tgtX, th + cam.tgtClearance, cam.tgtZ);
       app.controls.update();
-
-      // Recenter chunks on new target for this view
       app.centerCX = Infinity;
       app.centerCZ = Infinity;
       app.updateChunks();
 
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 150));
       app.update();
-      await new Promise(r => setTimeout(r, 100));
 
-      const image = await app.captureFrame();
-      const label = `benchmark_${stage}_${cam.name}`;
+      const image = await app.captureFrame('jpeg', 0.92);
+      frames.push({
+        image,
+        label: `benchmark_${stage}_${cam.name}`,
+        metadata: { ...app.getSnapshotState(), benchmarkStage: stage, benchmarkView: cam.name, benchmarkJudges: cam.judges, clayMode: true },
+        name: cam.name,
+      });
+    }
+    const renderMs = performance.now() - renderT0;
+    console.log(`[benchmark] rendered ${frames.length} views in ${renderMs.toFixed(0)}ms`);
 
-      const metadata = {
-        ...app.getSnapshotState(),
-        benchmarkStage: stage,
-        benchmarkView: cam.name,
-        benchmarkJudges: cam.judges,
-        clayMode: true,
-      };
-
-      try {
-        const resp = await fetch('/api/snapshot', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image, label, format: 'png', metadata }),
-        });
+    // Phase 2: Upload all frames concurrently
+    const uploadT0 = performance.now();
+    const uploads = frames.map(f =>
+      fetch('/api/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: f.image, label: f.label, format: 'jpeg', metadata: f.metadata }),
+      }).then(async resp => {
         if (resp.ok) {
           const result = await resp.json();
-          const viewMs = performance.now() - viewT0;
-          console.log(`[benchmark] ${cam.name} (${stage}): ${result.id} [${viewMs.toFixed(0)}ms]`);
+          console.log(`[benchmark] ${f.name} (${stage}): ${result.id}`);
         }
-      } catch (err) {
-        console.error(`[benchmark] ${cam.name} failed:`, err);
-      }
-    }
+      }).catch(err => console.error(`[benchmark] ${f.name} failed:`, err))
+    );
+    await Promise.all(uploads);
+    const uploadMs = performance.now() - uploadT0;
 
     if (!wasClay) app.setClayMode(false);
     const captureMs = performance.now() - captureT0;
-    console.log(`[benchmark] capture complete (${stage}) — ${BENCHMARK_CAMERAS.length} views in ${captureMs.toFixed(0)}ms`);
+    console.log(`[benchmark] capture complete (${stage}) — render: ${renderMs.toFixed(0)}ms, upload: ${uploadMs.toFixed(0)}ms, total: ${captureMs.toFixed(0)}ms`);
   };
 
   // Auto-capture on load: ?capture=label triggers fast benchmark capture
