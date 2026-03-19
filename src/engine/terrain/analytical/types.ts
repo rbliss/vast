@@ -27,12 +27,12 @@ export interface AnalyticalPrepassConfig {
 
 export const DEFAULT_ANALYTICAL_PREPASS: AnalyticalPrepassConfig = {
   enabled: true,
-  coarseGridSize: 384,       // AE1a tuning: higher res to reduce coarse-grid striping
-  fixedPointIterations: 6,
-  age: 1.0,
-  erosionK: 0.0008,
+  coarseGridSize: 384,
+  fixedPointIterations: 8,   // AE1a.2: more fp iterations for drainage convergence
+  age: 2.0,                  // AE1a.2: stronger erosion age — assert the drainage skeleton
+  erosionK: 0.002,           // AE1a.2: stronger K — visible incision
   areaExponent: 0.4,
   slopeExponent: 1.0,
-  blendStrength: 0.55,       // AE1a tuning: reduced to keep backbone without over-imprint
-  smoothingPasses: 3,        // AE1a tuning: soften coarse artifacts
+  blendStrength: 0.75,       // AE1a.2: direct solved-height blend — stronger influence
+  smoothingPasses: 2,        // AE1a.2: less smoothing — keep the analytical structure
 };

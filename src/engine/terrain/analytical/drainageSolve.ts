@@ -2,23 +2,129 @@
  * Implicit upstream-ordered drainage elevation solve.
  *
  * Clean-room implementation inspired by the Braun-Willett approach:
- * process cells from highest to lowest (upstream order), computing
- * each cell's eroded elevation from its downstream receiver's elevation
- * plus the stream-power incision contribution.
+ * process cells downstream → upstream, computing each cell's eroded
+ * elevation from its already-resolved receiver's elevation plus the
+ * stream-power incision contribution.
  *
- * Key insight: in upstream order, each cell's steady-state elevation
- * can be solved analytically because all downstream cells are already
- * resolved. This converges much faster than iterative stream-power
- * because it directly computes the equilibrium drainage profile.
- *
- * The solve produces organized drainage trees because it respects
- * the hierarchical flow structure — trunk channels with consistent
- * downstream gradients, tributaries feeding into them.
+ * AE1a.2 improvements:
+ * - Priority-flood depression filling before drainage routing
+ * - Explicit boundary outlet enforcement
+ * - Correct downstream→upstream solve ordering
  */
+
+// D8 neighbor offsets
+const DX = [-1, 0, 1, -1, 1, -1, 0, 1];
+const DZ = [-1, -1, -1, 0, 0, 1, 1, 1];
+const DIST = [Math.SQRT2, 1, Math.SQRT2, 1, 1, Math.SQRT2, 1, Math.SQRT2];
+
+/**
+ * Simple binary min-heap for priority-flood.
+ */
+class MinHeap {
+  private data: Float64Array; // interleaved [height, index] pairs
+  private size = 0;
+
+  constructor(capacity: number) {
+    this.data = new Float64Array(capacity * 2);
+  }
+
+  push(h: number, idx: number): void {
+    let i = this.size++;
+    this.data[i * 2] = h;
+    this.data[i * 2 + 1] = idx;
+    // Bubble up
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (this.data[parent * 2] <= this.data[i * 2]) break;
+      this.swap(i, parent);
+      i = parent;
+    }
+  }
+
+  pop(): { h: number; idx: number } {
+    const h = this.data[0];
+    const idx = this.data[1];
+    this.size--;
+    if (this.size > 0) {
+      this.data[0] = this.data[this.size * 2];
+      this.data[1] = this.data[this.size * 2 + 1];
+      this.sinkDown(0);
+    }
+    return { h, idx };
+  }
+
+  get length(): number { return this.size; }
+
+  private swap(a: number, b: number): void {
+    const h = this.data[a * 2], i = this.data[a * 2 + 1];
+    this.data[a * 2] = this.data[b * 2]; this.data[a * 2 + 1] = this.data[b * 2 + 1];
+    this.data[b * 2] = h; this.data[b * 2 + 1] = i;
+  }
+
+  private sinkDown(i: number): void {
+    while (true) {
+      let smallest = i;
+      const l = 2 * i + 1, r = 2 * i + 2;
+      if (l < this.size && this.data[l * 2] < this.data[smallest * 2]) smallest = l;
+      if (r < this.size && this.data[r * 2] < this.data[smallest * 2]) smallest = r;
+      if (smallest === i) break;
+      this.swap(i, smallest);
+      i = smallest;
+    }
+  }
+}
+
+/**
+ * Priority-flood depression filling (Barnes et al. 2014 simplified).
+ * Ensures all cells can drain to the boundary — no internal sinks.
+ * Modifies grid in place (only raises cells, never lowers).
+ * Uses binary min-heap for O(n log n) performance.
+ */
+export function fillDepressions(grid: Float32Array, w: number, h: number): void {
+  const n = w * h;
+  const filled = new Float32Array(n);
+  filled.fill(Infinity);
+
+  const heap = new MinHeap(n);
+  const visited = new Uint8Array(n);
+
+  // Seed boundary cells
+  for (let z = 0; z < h; z++) {
+    for (let x = 0; x < w; x++) {
+      if (x === 0 || x === w - 1 || z === 0 || z === h - 1) {
+        const idx = z * w + x;
+        filled[idx] = grid[idx];
+        heap.push(grid[idx], idx);
+        visited[idx] = 1;
+      }
+    }
+  }
+
+  // Process
+  while (heap.length > 0) {
+    const { idx } = heap.pop();
+    const x = idx % w;
+    const z = (idx - x) / w;
+
+    for (let d = 0; d < 8; d++) {
+      const nx = x + DX[d];
+      const nz = z + DZ[d];
+      if (nx < 0 || nx >= w || nz < 0 || nz >= h) continue;
+      const ni = nz * w + nx;
+      if (visited[ni]) continue;
+
+      filled[ni] = Math.max(grid[ni], filled[idx] + 0.001);
+      visited[ni] = 1;
+      heap.push(filled[ni], ni);
+    }
+  }
+
+  grid.set(filled);
+}
 
 /**
  * Compute D8 flow directions and drainage area on the coarse grid.
- * Returns receiver indices and accumulated area (in cell counts).
+ * Assumes depressions have been filled (no internal sinks).
  */
 export function computeCoarseDrainage(
   grid: Float32Array, w: number, h: number, cellSize: number,
@@ -27,25 +133,20 @@ export function computeCoarseDrainage(
   const receiver = new Int32Array(n);
   const area = new Float32Array(n);
 
-  // D8 neighbor offsets
-  const dx = [-1, 0, 1, -1, 1, -1, 0, 1];
-  const dz = [-1, -1, -1, 0, 0, 1, 1, 1];
-  const dist = [Math.SQRT2, 1, Math.SQRT2, 1, 1, Math.SQRT2, 1, Math.SQRT2];
-
   // Find steepest descent receiver for each cell
   for (let z = 0; z < h; z++) {
     for (let x = 0; x < w; x++) {
       const idx = z * w + x;
       const hc = grid[idx];
       let bestSlope = 0;
-      let bestRecv = idx; // self = pit/boundary
+      let bestRecv = idx; // self = boundary outlet
 
       for (let d = 0; d < 8; d++) {
-        const nx = x + dx[d];
-        const nz = z + dz[d];
+        const nx = x + DX[d];
+        const nz = z + DZ[d];
         if (nx < 0 || nx >= w || nz < 0 || nz >= h) continue;
         const ni = nz * w + nx;
-        const slope = (hc - grid[ni]) / (dist[d] * cellSize);
+        const slope = (hc - grid[ni]) / (DIST[d] * cellSize);
         if (slope > bestSlope) {
           bestSlope = slope;
           bestRecv = ni;
@@ -61,7 +162,7 @@ export function computeCoarseDrainage(
   highToLow.sort((a, b) => grid[b] - grid[a]);
 
   // Accumulate area in upstream order (highest first → area flows downstream)
-  area.fill(cellSize * cellSize); // each cell starts with its own area (world units)
+  area.fill(cellSize * cellSize);
   for (let i = 0; i < n; i++) {
     const idx = highToLow[i];
     const recv = receiver[idx];
@@ -71,7 +172,6 @@ export function computeCoarseDrainage(
   }
 
   // Reverse order: lowest to highest (for elevation solve — downstream first)
-  // Each cell's elevation depends on its receiver, so receivers must be solved first.
   const lowToHigh = new Int32Array(n);
   for (let i = 0; i < n; i++) lowToHigh[i] = highToLow[n - 1 - i];
 
@@ -81,30 +181,11 @@ export function computeCoarseDrainage(
 /**
  * Implicit upstream-ordered elevation solve.
  *
- * For each cell in upstream order (highest first), compute the
- * steady-state eroded elevation based on:
- *   h_i = h_receiver + dt * K * A^m * (slope)^n
+ * For n≈1 (linear slope): analytical solution per cell:
+ *   h_i = (h_initial + factor * h_receiver) / (1 + factor)
+ *   where factor = K * A^m * age / L
  *
- * Rearranged for implicit solve:
- *   h_i = h_receiver + L * K * A^m * ((h_i - h_receiver) / L)^n
- *
- * For n=1 (linear slope dependence), this has an analytical solution:
- *   h_i = (h_initial + age * K * A^m * h_receiver / L) / (1 + age * K * A^m / L)
- *
- * For n≠1, we use a simple fixed-point iteration per cell.
- *
- * @param grid - Height grid (modified in place)
- * @param initial - Original heights (for blending/limiting)
- * @param receiver - D8 receiver indices
- * @param area - Drainage area (world units)
- * @param order - Upstream-sorted cell indices
- * @param w - Grid width
- * @param h - Grid height
- * @param cellSize - Cell spacing
- * @param K - Erosion coefficient
- * @param m - Area exponent
- * @param n_exp - Slope exponent
- * @param age - Erosion age (scales the solve intensity)
+ * Processes downstream → upstream so receiver elevations are known.
  */
 export function implicitElevationSolve(
   grid: Float32Array,
@@ -119,12 +200,12 @@ export function implicitElevationSolve(
 ): void {
   const totalCells = w * h;
 
-  // Process downstream → upstream (lowest first): each cell's receiver is already resolved
+  // Process downstream → upstream (lowest first)
   for (let i = 0; i < totalCells; i++) {
     const idx = order[i];
     const recv = receiver[idx];
 
-    // Skip pits / boundary cells (receiver = self)
+    // Skip outlets / boundary cells (receiver = self)
     if (recv === idx) continue;
 
     // Distance to receiver
@@ -132,9 +213,9 @@ export function implicitElevationSolve(
     const iz = (idx - ix) / w;
     const rx = recv % w;
     const rz = (recv - rx) / w;
-    const dx = Math.abs(ix - rx);
-    const dz = Math.abs(iz - rz);
-    const L = (dx + dz > 1 ? Math.SQRT2 : 1) * cellSize;
+    const ddx = Math.abs(ix - rx);
+    const ddz = Math.abs(iz - rz);
+    const L = (ddx + ddz > 1 ? Math.SQRT2 : 1) * cellSize;
 
     const h_recv = grid[recv];
     const h_init = initial[idx];
@@ -144,17 +225,15 @@ export function implicitElevationSolve(
     const erosionTerm = K * Math.pow(A, m) * age;
 
     if (Math.abs(n_exp - 1.0) < 0.01) {
-      // Linear slope case (n≈1): analytical solution
-      // h_i = (h_init + erosionTerm * h_recv / L) / (1 + erosionTerm / L)
+      // Linear slope case: analytical solution
       const factor = erosionTerm / L;
       const h_new = (h_init + factor * h_recv) / (1 + factor);
-
-      // Only allow erosion (lowering), not deposition above initial
-      grid[idx] = Math.min(h_init, Math.max(h_recv, h_new));
+      // Only erode (lower), enforce h >= h_receiver
+      grid[idx] = Math.min(h_init, Math.max(h_recv + 0.001, h_new));
     } else {
       // Nonlinear case: simple iteration
       let h_current = grid[idx];
-      for (let iter = 0; iter < 4; iter++) {
+      for (let iter = 0; iter < 5; iter++) {
         const slope = Math.max(0.001, (h_current - h_recv) / L);
         const erosion = erosionTerm * Math.pow(slope, n_exp);
         const h_new = h_init - erosion;

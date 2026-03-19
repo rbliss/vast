@@ -1,17 +1,15 @@
 /**
- * Analytical coarse fluvial prepass (AE1a).
+ * Analytical coarse fluvial prepass (AE1a.2).
  *
- * Benchmark-only stage that runs before the production bake pipeline.
- * Downsamples the benchmark terrain to a coarse grid, runs an implicit
- * upstream-ordered drainage solve to establish large-scale drainage
- * organization, then upsamples and blends back with the original terrain.
- *
- * This gives the production pipeline a better drainage skeleton to
- * refine, rather than starting from a nearly flat tableland.
+ * AE1a.2 improvements:
+ * - Depression filling before drainage routing (no trapped flow)
+ * - Explicit boundary base-level enforcement
+ * - Direct solved-height blend (not just delta)
+ * - Stronger solve with proper drainage graph
  */
 
 import type { AnalyticalPrepassConfig } from './types';
-import { computeCoarseDrainage, implicitElevationSolve } from './drainageSolve';
+import { fillDepressions, computeCoarseDrainage, implicitElevationSolve } from './drainageSolve';
 
 /**
  * Run the analytical coarse prepass on a benchmark heightfield.
@@ -20,7 +18,6 @@ import { computeCoarseDrainage, implicitElevationSolve } from './drainageSolve';
  * @param gridSize - Full grid dimension (e.g. 1024)
  * @param extent - World-space half-extent (e.g. 800)
  * @param config - Prepass configuration
- * @returns The coarse grid (for diagnostic capture)
  */
 export function runAnalyticalPrepass(
   grid: Float32Array,
@@ -37,11 +34,9 @@ export function runAnalyticalPrepass(
   const coarseGrid = new Float32Array(coarseSize * coarseSize);
   for (let cz = 0; cz < coarseSize; cz++) {
     for (let cx = 0; cx < coarseSize; cx++) {
-      // Map coarse cell to world position
       const wx = -extent + cx * coarseCellSize;
       const wz = -extent + cz * coarseCellSize;
 
-      // Sample from full grid (bilinear)
       const gx = (wx + extent) / fullCellSize;
       const gz = (wz + extent) / fullCellSize;
       const ix = Math.min(gridSize - 2, Math.max(0, Math.floor(gx)));
@@ -49,30 +44,29 @@ export function runAnalyticalPrepass(
       const fx = gx - ix;
       const fz = gz - iz;
 
-      const h00 = grid[iz * gridSize + ix];
-      const h10 = grid[iz * gridSize + ix + 1];
-      const h01 = grid[(iz + 1) * gridSize + ix];
-      const h11 = grid[(iz + 1) * gridSize + ix + 1];
-
       coarseGrid[cz * coarseSize + cx] =
-        h00 * (1 - fx) * (1 - fz) +
-        h10 * fx * (1 - fz) +
-        h01 * (1 - fx) * fz +
-        h11 * fx * fz;
+        grid[iz * gridSize + ix] * (1 - fx) * (1 - fz) +
+        grid[iz * gridSize + ix + 1] * fx * (1 - fz) +
+        grid[(iz + 1) * gridSize + ix] * (1 - fx) * fz +
+        grid[(iz + 1) * gridSize + ix + 1] * fx * fz;
     }
   }
 
-  // Save initial coarse heights for blending
+  // Save initial coarse heights
   const coarseInitial = new Float32Array(coarseGrid);
 
-  // ── Step 2: Fixed-point coupling loop ──
+  // ── Step 2: Fill depressions so all cells can drain to boundary ──
+  fillDepressions(coarseGrid, coarseSize, coarseSize);
+  console.log(`[analytical] depressions filled on ${coarseSize}² grid`);
+
+  // ── Step 3: Fixed-point coupling loop ──
   for (let fp = 0; fp < config.fixedPointIterations; fp++) {
-    // 2a. Compute drainage on current coarse grid
+    // 3a. Compute drainage on current coarse grid
     const { receiver, area, order } = computeCoarseDrainage(
       coarseGrid, coarseSize, coarseSize, coarseCellSize,
     );
 
-    // 2b. Implicit upstream-ordered elevation solve
+    // 3b. Implicit upstream-ordered elevation solve
     implicitElevationSolve(
       coarseGrid, coarseInitial,
       receiver, area, order,
@@ -81,9 +75,14 @@ export function runAnalyticalPrepass(
       config.erosionK, config.areaExponent, config.slopeExponent,
       config.age,
     );
+
+    // 3c. Re-fill depressions only every few iterations (expensive)
+    if (fp === 2 || fp === 5) {
+      fillDepressions(coarseGrid, coarseSize, coarseSize);
+    }
   }
 
-  // ── Step 3: Smoothing passes (reduce coarse grid artifacts) ──
+  // ── Step 4: Light smoothing (artifact reduction only) ──
   for (let s = 0; s < config.smoothingPasses; s++) {
     const tmp = new Float32Array(coarseGrid);
     for (let z = 1; z < coarseSize - 1; z++) {
@@ -93,53 +92,48 @@ export function runAnalyticalPrepass(
           tmp[idx - 1] + tmp[idx + 1] +
           tmp[idx - coarseSize] + tmp[idx + coarseSize]
         ) / 4;
-        // Gentle smoothing: blend toward neighbor average
-        coarseGrid[idx] = tmp[idx] * 0.7 + avg * 0.3;
+        coarseGrid[idx] = tmp[idx] * 0.75 + avg * 0.25;
       }
     }
   }
 
   const tCoarse = performance.now() - t0;
-  console.log(`[analytical] coarse prepass: ${config.fixedPointIterations} fp iterations on ${coarseSize}² grid (${tCoarse.toFixed(0)}ms)`);
+  console.log(`[analytical] coarse solve: ${config.fixedPointIterations} fp iters, ${coarseSize}² (${tCoarse.toFixed(0)}ms)`);
 
-  // ── Step 4: Upsample coarse result back to full resolution ──
-  // Compute the delta (change from coarse initial) and apply it to the full grid
-  const coarseDelta = new Float32Array(coarseSize * coarseSize);
-  for (let i = 0; i < coarseGrid.length; i++) {
-    coarseDelta[i] = coarseGrid[i] - coarseInitial[i];
-  }
-
-  // Bilinear upsample delta to full resolution and blend
+  // ── Step 5: Upsample and blend with full-resolution grid ──
+  // Direct solved-height blend: interpolate between initial and solved heights
+  // This is stronger than delta-only blend because it directly imposes the
+  // solved drainage structure rather than adding a subtle correction.
   for (let fz = 0; fz < gridSize; fz++) {
     for (let fx = 0; fx < gridSize; fx++) {
       const wx = -extent + fx * fullCellSize;
       const wz = -extent + fz * fullCellSize;
 
       // Map to coarse grid coordinates
-      const cx = (wx + extent) / coarseCellSize;
-      const cz = (wz + extent) / coarseCellSize;
-      const ix = Math.min(coarseSize - 2, Math.max(0, Math.floor(cx)));
-      const iz = Math.min(coarseSize - 2, Math.max(0, Math.floor(cz)));
-      const fracX = cx - ix;
-      const fracZ = cz - iz;
+      const ccx = (wx + extent) / coarseCellSize;
+      const ccz = (wz + extent) / coarseCellSize;
+      const ix = Math.min(coarseSize - 2, Math.max(0, Math.floor(ccx)));
+      const iz = Math.min(coarseSize - 2, Math.max(0, Math.floor(ccz)));
+      const fracX = ccx - ix;
+      const fracZ = ccz - iz;
 
-      // Bilinear interpolation of the delta
-      const d00 = coarseDelta[iz * coarseSize + ix];
-      const d10 = coarseDelta[iz * coarseSize + ix + 1];
-      const d01 = coarseDelta[(iz + 1) * coarseSize + ix];
-      const d11 = coarseDelta[(iz + 1) * coarseSize + ix + 1];
+      // Bilinear interpolation of solved coarse height
+      const s00 = coarseGrid[iz * coarseSize + ix];
+      const s10 = coarseGrid[iz * coarseSize + ix + 1];
+      const s01 = coarseGrid[(iz + 1) * coarseSize + ix];
+      const s11 = coarseGrid[(iz + 1) * coarseSize + ix + 1];
 
-      const delta =
-        d00 * (1 - fracX) * (1 - fracZ) +
-        d10 * fracX * (1 - fracZ) +
-        d01 * (1 - fracX) * fracZ +
-        d11 * fracX * fracZ;
+      const solvedH =
+        s00 * (1 - fracX) * (1 - fracZ) +
+        s10 * fracX * (1 - fracZ) +
+        s01 * (1 - fracX) * fracZ +
+        s11 * fracX * fracZ;
 
-      // Apply blended delta to full grid
+      // Direct blend: lerp between original full-res height and solved height
       const fullIdx = fz * gridSize + fx;
-      grid[fullIdx] += delta * config.blendStrength;
+      const originalH = grid[fullIdx];
+      grid[fullIdx] = originalH * (1 - config.blendStrength) + solvedH * config.blendStrength;
 
-      // Clamp to minimum
       if (grid[fullIdx] < 0.5) grid[fullIdx] = 0.5;
     }
   }
