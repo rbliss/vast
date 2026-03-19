@@ -160,6 +160,7 @@ const app = await TerrainApp.createAsync(viewportHost, worldDoc, terrainSource, 
   dprMode,
   dprInitial,
   waterLevel,
+  skipTextures: isBenchmark,
 }, bakeArtifacts, terrainDomain);
 
 // Canvas is already appended to viewportHost by TerrainApp constructor

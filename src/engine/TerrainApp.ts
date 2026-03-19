@@ -133,10 +133,15 @@ export class TerrainApp {
     this._hemiLight = lighting.hemi as THREE.HemisphereLight;
     this._sunLight = lighting.sun as THREE.DirectionalLight;
 
-    // IBL
-    const env = backend.createEnvironment();
-    this._envMap = env.environmentMap;
-    this._iblEnabled = true;
+    // IBL — skip loading cube map in clay-only mode
+    if (!opts.skipTextures) {
+      const env = backend.createEnvironment();
+      this._envMap = env.environmentMap;
+    } else {
+      this._envMap = new THREE.CubeTexture();
+      console.log('[env] skipping environment map load (clay-only mode)');
+    }
+    this._iblEnabled = !opts.skipTextures;
     this._clayMode = false;
     this._clayMatDisp = null;
     this._clayMatNoDisp = null;
@@ -161,7 +166,7 @@ export class TerrainApp {
     this._applyMovement = applyMovement;
 
     // Materials — TSL/WebGPU (field-driven if available)
-    this.textures = loadTextureSet(this.renderer);
+    this.textures = loadTextureSet(this.renderer, opts.skipTextures);
     const { matDisp, matNoDisp } = materialFactory(
       this.textures,
       fieldTextures?.fieldMap,

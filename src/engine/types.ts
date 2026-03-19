@@ -15,6 +15,8 @@ export interface TerrainAppOptions {
   dprInitial?: number;
   /** Water level (null = no water) */
   waterLevel?: number | null;
+  /** Skip loading terrain textures (for clay-only modes like benchmark) */
+  skipTextures?: boolean;
 }
 
 export interface TerrainUpdateResult {

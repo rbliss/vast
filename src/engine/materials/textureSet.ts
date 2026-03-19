@@ -3,7 +3,24 @@ import type { Texture } from 'three';
 import type { TextureSet } from '../types';
 import type { RendererLike } from '../backend/types';
 
-export function loadTextureSet(renderer: RendererLike): TextureSet {
+export function loadTextureSet(renderer: RendererLike, skip = false): TextureSet {
+  if (skip) {
+    // Return 1x1 placeholder textures — no network requests
+    function placeholderTex(): Texture {
+      const tex = new THREE.DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.needsUpdate = true;
+      return tex;
+    }
+    console.log('[tex] skipping texture load (clay-only mode)');
+    return {
+      rockDiff: placeholderTex(), rockDisp: placeholderTex(), rockNorm: placeholderTex(),
+      rockRough: placeholderTex(), rockAo: placeholderTex(),
+      grassDiff: placeholderTex(), grassNorm: placeholderTex(), grassRough: placeholderTex(),
+      dirtDiff: placeholderTex(), dirtNorm: placeholderTex(), dirtRough: placeholderTex(),
+    };
+  }
+
   const loader = new THREE.TextureLoader();
 
   function loadTex(path: string, srgb = false): Texture {
