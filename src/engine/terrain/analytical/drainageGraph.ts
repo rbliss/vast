@@ -42,6 +42,8 @@ export interface DrainageEdge {
   level: number;
   /** World-space length of this edge */
   length: number;
+  /** Smoothed polyline path (x,z pairs) from source to destination */
+  path: number[];
 }
 
 export interface DrainageGraph {
@@ -127,27 +129,43 @@ export function extractDrainageGraph(
     const recv = receiver[node.idx];
     if (recv === node.idx) continue; // outlet
 
-    // Walk downstream until we hit another graph node or an outlet
-    // Cycle protection: limit walk to grid size
+    // Walk downstream, recording the path
+    const rawPath: number[] = [node.x, node.z];
     let current = recv;
     let pathLength = cellSize;
     let maxSteps = w + h;
     while (gridToNode[current] === -1 && receiver[current] !== current && maxSteps-- > 0) {
+      rawPath.push(current % w, Math.floor(current / w));
       current = receiver[current];
       pathLength += cellSize;
     }
 
     const downstreamNodeIdx = gridToNode[current];
     if (downstreamNodeIdx >= 0 && downstreamNodeIdx !== i) {
+      const dst = nodes[downstreamNodeIdx];
+      rawPath.push(dst.x, dst.z);
       node.downstream = downstreamNodeIdx;
-      nodes[downstreamNodeIdx].upstream.push(i);
+      dst.upstream.push(i);
+
+      // Smooth the path: 3-pass Laplacian smoothing (keep endpoints fixed)
+      const smoothed = new Float64Array(rawPath);
+      const nPts = smoothed.length / 2;
+      if (nPts > 3) {
+        for (let pass = 0; pass < 3; pass++) {
+          for (let p = 1; p < nPts - 1; p++) {
+            smoothed[p * 2]     = smoothed[(p-1) * 2] * 0.25 + smoothed[p * 2] * 0.5 + smoothed[(p+1) * 2] * 0.25;
+            smoothed[p * 2 + 1] = smoothed[(p-1) * 2 + 1] * 0.25 + smoothed[p * 2 + 1] * 0.5 + smoothed[(p+1) * 2 + 1] * 0.25;
+          }
+        }
+      }
 
       edges.push({
         from: i,
         to: downstreamNodeIdx,
-        area: Math.min(node.area, nodes[downstreamNodeIdx].area),
-        level: Math.max(node.level, nodes[downstreamNodeIdx].level),
+        area: Math.min(node.area, dst.area),
+        level: Math.max(node.level, dst.level),
         length: pathLength,
+        path: Array.from(smoothed),
       });
     }
   }
@@ -197,24 +215,26 @@ export function generateGuidanceFields(
   // Step 2: Derive valley profile from the distance field.
   // This replaces per-step stamping and produces smooth, continuous valleys.
 
-  // Build edge segments for efficient distance queries
+  // Build edge segments from smoothed polyline paths
   interface EdgeSeg { x1: number; z1: number; x2: number; z2: number; area: number; level: number; }
   const segments: EdgeSeg[] = [];
   for (const edge of graph.edges) {
     const src = graph.nodes[edge.from];
     const dst = graph.nodes[edge.to];
-    // Subdivide long edges for better distance accuracy
-    const edgeDx = dst.x - src.x;
-    const edgeDz = dst.z - src.z;
-    const edgeLen = Math.sqrt(edgeDx * edgeDx + edgeDz * edgeDz);
-    if (edgeLen < 0.5) continue;
-    const subdivs = Math.max(1, Math.ceil(edgeLen / 3));
-    for (let s = 0; s < subdivs; s++) {
-      const t0 = s / subdivs, t1 = (s + 1) / subdivs;
+    const path = edge.path;
+    const nPts = path.length / 2;
+    if (nPts < 2) continue;
+
+    // Create segments along the smoothed polyline
+    // Subsample long paths to keep segment count manageable
+    const step = Math.max(1, Math.floor(nPts / 20));
+    for (let p = 0; p < nPts - step; p += step) {
+      const p2 = Math.min(p + step, nPts - 1);
+      const t = (p + p2) / 2 / Math.max(1, nPts - 1);
       segments.push({
-        x1: src.x + edgeDx * t0, z1: src.z + edgeDz * t0,
-        x2: src.x + edgeDx * t1, z2: src.z + edgeDz * t1,
-        area: src.area + (dst.area - src.area) * (t0 + t1) * 0.5,
+        x1: path[p * 2], z1: path[p * 2 + 1],
+        x2: path[p2 * 2], z2: path[p2 * 2 + 1],
+        area: src.area + (dst.area - src.area) * t,
         level: edge.level,
       });
     }
@@ -240,48 +260,80 @@ export function generateGuidanceFields(
     }
   }
 
-  // For each raster cell, find nearest segment via spatial grid
+  // For each raster cell, find nearest segments and blend valleys smoothly
   for (let z = 0; z < h; z++) {
     for (let x = 0; x < w; x++) {
       const idx = z * w + x;
       const bx = Math.floor(x / bucketSize), bz = Math.floor(z / bucketSize);
       const bucket = buckets[bz * bw + bx];
 
-      let bestDist = Infinity;
-      let bestArea = 0;
-      let bestLevel = 3;
+      // Collect top-2 nearest segments for smooth junction blending
+      let dist1 = Infinity, area1 = 0, level1 = 3;
+      let dist2 = Infinity, area2 = 0, level2 = 3;
 
       for (const si of bucket) {
         const seg = segments[si];
-        const dx = seg.x2 - seg.x1, dz = seg.z2 - seg.z1;
-        const len2 = dx * dx + dz * dz;
-        let t = len2 > 0 ? ((x - seg.x1) * dx + (z - seg.z1) * dz) / len2 : 0;
+        const sdx = seg.x2 - seg.x1, sdz = seg.z2 - seg.z1;
+        const len2 = sdx * sdx + sdz * sdz;
+        let t = len2 > 0 ? ((x - seg.x1) * sdx + (z - seg.z1) * sdz) / len2 : 0;
         t = Math.max(0, Math.min(1, t));
-        const px = seg.x1 + dx * t, pz = seg.z1 + dz * t;
+        const px = seg.x1 + sdx * t, pz = seg.z1 + sdz * t;
         const dist = Math.sqrt((x - px) * (x - px) + (z - pz) * (z - pz)) * cellSize;
 
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestArea = seg.area;
-          bestLevel = seg.level;
+        if (dist < dist1) {
+          dist2 = dist1; area2 = area1; level2 = level1;
+          dist1 = dist; area1 = seg.area; level1 = seg.level;
+        } else if (dist < dist2) {
+          dist2 = dist; area2 = seg.area; level2 = seg.level;
         }
       }
 
-      distToChannel[idx] = bestDist;
+      distToChannel[idx] = dist1;
 
-      // Derive valley profile from distance field
-      const width = Math.min(10, 1.5 + Math.pow(bestArea / 1000, 0.25) * 2.5) * cellSize;
-      const depth = Math.min(30, 2 + Math.pow(bestArea / 500, 0.35) * 5);
-      const levelScale = bestLevel <= 1 ? 1.0 : bestLevel === 2 ? 0.55 : 0.25;
+      // Compute valley profile for nearest channel
+      const width1 = Math.min(10, 1.5 + Math.pow(area1 / 1000, 0.25) * 2.5) * cellSize;
+      const depth1Raw = Math.min(30, 2 + Math.pow(area1 / 500, 0.35) * 5);
+      const levelScale1 = level1 <= 1 ? 1.0 : level1 === 2 ? 0.55 : 0.25;
 
-      if (bestDist < width) {
-        const t = bestDist / width;
-        // Smooth valley cross-section: smoothstep for rounder profile
-        const profile = 1 - t * t * (3 - 2 * t);
-        channelStrength[idx] = profile * levelScale;
-        valleyWidth[idx] = width;
-        valleyDepth[idx] = depth * profile * levelScale;
+      if (dist1 >= width1) continue; // outside any valley
+
+      const t1 = dist1 / width1;
+      const profile1 = 1 - t1 * t1 * (3 - 2 * t1); // smoothstep
+      let strength = profile1 * levelScale1;
+      let depth = depth1Raw * profile1 * levelScale1;
+      let vWidth = width1;
+
+      // Smooth junction blending: if second-nearest channel is also close,
+      // blend the two valley contributions using exponential soft-min
+      if (dist2 < Infinity) {
+        const width2 = Math.min(10, 1.5 + Math.pow(area2 / 1000, 0.25) * 2.5) * cellSize;
+        if (dist2 < width2 * 1.5) {
+          const depth2Raw = Math.min(30, 2 + Math.pow(area2 / 500, 0.35) * 5);
+          const levelScale2 = level2 <= 1 ? 1.0 : level2 === 2 ? 0.55 : 0.25;
+          const t2 = dist2 / width2;
+          const profile2 = Math.max(0, 1 - t2 * t2 * (3 - 2 * t2));
+          const strength2 = profile2 * levelScale2;
+          const depth2 = depth2Raw * profile2 * levelScale2;
+
+          // Smooth union: take the deeper valley, blend where they overlap
+          if (depth2 > depth) {
+            // Second channel dominates here
+            const blend = Math.min(1, (dist1 - dist2 + 2) / 4); // smooth transition zone
+            strength = strength * (1 - blend) + strength2 * blend;
+            depth = depth * (1 - blend) + depth2 * blend;
+            vWidth = vWidth * (1 - blend) + width2 * blend;
+          } else if (strength2 > 0.05) {
+            // First dominates but add a bit of the second for smooth merge
+            const additive = strength2 * 0.3;
+            strength = Math.min(1, strength + additive);
+            depth = depth + depth2 * 0.2;
+          }
+        }
       }
+
+      channelStrength[idx] = strength;
+      valleyWidth[idx] = vWidth;
+      valleyDepth[idx] = depth;
     }
   }
 
