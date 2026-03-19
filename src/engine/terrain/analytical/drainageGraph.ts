@@ -153,53 +153,85 @@ export function extractDrainageGraph(
 
   console.log(`[graph] channel cells: ${channelCellCount}, nodes after subsample: ${nodes.length} (spacing=${nodeSpacing})`);
 
-  // Step 3: Build edges by following receiver links between graph nodes
+  // Step 3: Build edges with continuous flowline tracing
+  // Instead of following raw D8 receiver chains (axis-aligned, jagged),
+  // trace smooth sub-cell streamlines through a bilinear gradient field.
   const edges: DrainageEdge[] = [];
+
+  // Helper: sample bilinear gradient at sub-cell position
+  function sampleGradient(fx: number, fz: number): [number, number] {
+    const ix = Math.max(1, Math.min(w - 2, Math.floor(fx)));
+    const iz = Math.max(1, Math.min(h - 2, Math.floor(fz)));
+    // Central difference gradient at integer cell, then bilinear interpolate
+    const gx = (grid[iz * w + ix + 1] - grid[iz * w + ix - 1]) * 0.5;
+    const gz = (grid[(iz + 1) * w + ix] - grid[(iz - 1) * w + ix]) * 0.5;
+    return [gx, gz];
+  }
 
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
     const recv = receiver[node.idx];
     if (recv === node.idx) continue; // outlet
 
-    // Walk downstream, recording the path
-    const rawPath: number[] = [node.x, node.z];
+    // Find downstream graph node via receiver chain
     let current = recv;
-    let pathLength = cellSize;
     let maxSteps = w + h;
     while (gridToNode[current] === -1 && receiver[current] !== current && maxSteps-- > 0) {
-      rawPath.push(current % w, Math.floor(current / w));
       current = receiver[current];
-      pathLength += cellSize;
     }
-
     const downstreamNodeIdx = gridToNode[current];
-    if (downstreamNodeIdx >= 0 && downstreamNodeIdx !== i) {
-      const dst = nodes[downstreamNodeIdx];
-      rawPath.push(dst.x, dst.z);
-      node.downstream = downstreamNodeIdx;
-      dst.upstream.push(i);
+    if (downstreamNodeIdx < 0 || downstreamNodeIdx === i) continue;
 
-      // Smooth the path: 3-pass Laplacian smoothing (keep endpoints fixed)
-      const smoothed = new Float64Array(rawPath);
-      const nPts = smoothed.length / 2;
-      if (nPts > 3) {
-        for (let pass = 0; pass < 3; pass++) {
-          for (let p = 1; p < nPts - 1; p++) {
-            smoothed[p * 2]     = smoothed[(p-1) * 2] * 0.25 + smoothed[p * 2] * 0.5 + smoothed[(p+1) * 2] * 0.25;
-            smoothed[p * 2 + 1] = smoothed[(p-1) * 2 + 1] * 0.25 + smoothed[p * 2 + 1] * 0.5 + smoothed[(p+1) * 2 + 1] * 0.25;
-          }
-        }
+    const dst = nodes[downstreamNodeIdx];
+    node.downstream = downstreamNodeIdx;
+    dst.upstream.push(i);
+
+    // Trace a continuous streamline from source to destination
+    // using the height gradient field for direction
+    const streamline: number[] = [node.x, node.z];
+    let sx = node.x + 0.5, sz = node.z + 0.5; // start at cell center
+    const stepSize = 0.8; // sub-cell step size
+    const maxTraceSteps = Math.ceil(Math.sqrt((dst.x - node.x) ** 2 + (dst.z - node.z) ** 2) * 3) + 20;
+
+    for (let step = 0; step < maxTraceSteps; step++) {
+      // Check if we've reached the destination (within 1.5 cells)
+      const dx = sx - dst.x, dz = sz - dst.z;
+      if (dx * dx + dz * dz < 2.25) break;
+
+      // Sample gradient at current position
+      const [gx, gz] = sampleGradient(sx, sz);
+      const gradLen = Math.sqrt(gx * gx + gz * gz);
+
+      if (gradLen < 0.001) {
+        // Flat area — fall back to direction toward destination
+        const tdx = dst.x - sx, tdz = dst.z - sz;
+        const tLen = Math.sqrt(tdx * tdx + tdz * tdz);
+        if (tLen > 0.1) { sx += tdx / tLen * stepSize; sz += tdz / tLen * stepSize; }
+        else break;
+      } else {
+        // Follow steepest descent (negative gradient)
+        sx -= gx / gradLen * stepSize;
+        sz -= gz / gradLen * stepSize;
       }
 
-      edges.push({
-        from: i,
-        to: downstreamNodeIdx,
-        area: Math.min(node.area, dst.area),
-        level: Math.max(node.level, dst.level),
-        length: pathLength,
-        path: Array.from(smoothed),
-      });
+      // Clamp to grid bounds
+      sx = Math.max(1, Math.min(w - 2, sx));
+      sz = Math.max(1, Math.min(h - 2, sz));
+
+      streamline.push(sx, sz);
     }
+    streamline.push(dst.x, dst.z);
+
+    const pathLength = streamline.length / 2 * stepSize * cellSize;
+
+    edges.push({
+      from: i,
+      to: downstreamNodeIdx,
+      area: Math.min(node.area, dst.area),
+      level: Math.max(node.level, dst.level),
+      length: pathLength,
+      path: streamline,
+    });
   }
 
   // Count outlet basins
