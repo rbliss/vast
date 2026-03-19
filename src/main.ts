@@ -122,16 +122,23 @@ if (isTestEnv) {
 } else if (isBenchmark) {
   // Check for micro-benchmark mode: ?micro=single-notch|double-notch|bowl-outlet|trunk-widen|piedmont
   const microName = params.get('micro');
+  // Declared here so capture function can access them
+  (window as any).__microName = microName;
+  (window as any).__microCamera = null;
 
   // Reference benchmark or micro-benchmark
   setStartupStatus(microName ? `Loading micro: ${microName}...` : 'Generating benchmark terrain...');
   let benchHF: import('./engine/terrain/editableHeightfield').EditableHeightfield;
+
+  let microCamera: { camX: number; camZ: number; clearance: number; tgtX: number; tgtZ: number; tgtClearance: number } | null = null;
 
   if (microName) {
     const { getMicroBenchmark } = await import('./engine/terrain/microBenchmarks');
     const micro = getMicroBenchmark(microName);
     if (!micro) throw new Error(`Unknown micro-benchmark: ${microName}`);
     benchHF = micro.heightfield;
+    microCamera = micro.camera;
+    (window as any).__microCamera = microCamera;
   } else {
     const { createReferenceBenchmarkHeightfield } = await import('./engine/terrain/benchmarkHeightfield');
     benchHF = createReferenceBenchmarkHeightfield();
@@ -818,19 +825,19 @@ import { REVIEW_PRESETS, computeReviewCamera } from './engine/reviewHarness';
 if (isBenchmark) {
   const { BENCHMARK_CAMERAS } = await import('./engine/terrain/benchmarkHeightfield');
 
-  // Position camera at the wide overview
-  const defaultCam = BENCHMARK_CAMERAS[0];
-  const camH = terrainSource.sampleHeight(defaultCam.camX, defaultCam.camZ);
-  const tgtH = terrainSource.sampleHeight(defaultCam.tgtX, defaultCam.tgtZ);
-  app.camera.position.set(defaultCam.camX, camH + defaultCam.clearance, defaultCam.camZ);
-  app.controls.target.set(defaultCam.tgtX, tgtH + defaultCam.tgtClearance, defaultCam.tgtZ);
+  // Use micro camera if in micro mode, otherwise full benchmark cameras
+  const activeCam = (window as any).__microCamera ?? BENCHMARK_CAMERAS[0];
+  const camH = terrainSource.sampleHeight(activeCam.camX, activeCam.camZ);
+  const tgtH = terrainSource.sampleHeight(activeCam.tgtX, activeCam.tgtZ);
+  app.camera.position.set(activeCam.camX, camH + activeCam.clearance, activeCam.camZ);
+  app.controls.target.set(activeCam.tgtX, tgtH + activeCam.tgtClearance, activeCam.tgtZ);
   app.controls.update();
 
   // Disable chunk skirts for clean benchmark review rendering
   app.noSkirts = true;
 
-  // Rebuild with extended coverage to show the tableland + piedmont (±480 world units)
-  app.rebuildExtendedCoverage(480);
+  // Coverage: smaller for micro-benchmarks, full for reference benchmark
+  app.rebuildExtendedCoverage((window as any).__microName ? 200 : 480);
 
   // Force chunk rebuild centered on new target
   app.centerCX = Infinity;
@@ -846,13 +853,20 @@ if (isBenchmark) {
     const wasClay = app.isClayMode();
     if (!wasClay) app.setClayMode(true);
 
+    // Use micro camera (single view) or full benchmark cameras (4 views)
+    const mc = (window as any).__microCamera;
+    const mn = (window as any).__microName;
+    const cameras = mc
+      ? [{ ...mc, name: 'micro-view', judges: mn ?? 'micro' }]
+      : BENCHMARK_CAMERAS;
+
     const captureT0 = performance.now();
-    console.log(`[benchmark] capturing ${BENCHMARK_CAMERAS.length} views (${stage})`);
+    console.log(`[benchmark] capturing ${cameras.length} views (${stage})`);
 
     // Phase 1: Render all views and collect frames (sequential — needs GPU)
     const frames: Array<{ image: string; label: string; metadata: Record<string, unknown>; name: string }> = [];
     const renderT0 = performance.now();
-    for (const cam of BENCHMARK_CAMERAS) {
+    for (const cam of cameras) {
       const ch = terrainSource.sampleHeight(cam.camX, cam.camZ);
       const th = terrainSource.sampleHeight(cam.tgtX, cam.tgtZ);
       app.camera.position.set(cam.camX, ch + cam.clearance, cam.camZ);
