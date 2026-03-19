@@ -684,12 +684,21 @@ export function streamPowerErosion(
           channelThreshold *= Math.max(0.15, 1.0 - Math.min(planCurv * 10.0, 0.85));
         }
 
+        // AE3.3: distToChannel — lower threshold near guided channel corridors
+        // Cells close to an AE-predicted channel should channelize much more easily
+        if (guidance && guidance.distToChannel.length > 0) {
+          const dist = guidance.distToChannel[idx];
+          const width = guidance.valleyWidth[idx];
+          if (dist < width * 2 && width > 0) {
+            // Within 2x the guided valley width: progressively lower threshold
+            const proximity = 1.0 - Math.min(1.0, dist / (width * 2));
+            channelThreshold *= Math.max(0.05, 1.0 - proximity * 0.9);
+          }
+        }
+
         // H2.4a/b: Proto-channel susceptibility lowers threshold
-        // This is the main tributary densification mechanism — persistent field
-        // accumulated from convergence, relief, rim context, and headward support.
         const proto = protoChannel[idx];
         if (proto > 0.03) {
-          // H2.4b: stronger effect — susceptibility reduces threshold by up to 90%
           channelThreshold *= Math.max(0.1, 1.0 - proto * 0.9);
         }
 
@@ -739,7 +748,14 @@ export function streamPowerErosion(
         const effectiveAreaExp = areaExponent * (0.7 + 0.3 * fluvialFraction);
         const effectiveSlopeExp = slopeExponent * (1.3 - 0.3 * fluvialFraction);
 
-        let erosion = effectiveK * R * mesaProtection * headwardBoost *
+        // AE3.3: valleyDepth — boost erosion intensity in AE-predicted channel zones
+        let aeDepthBoost = 1.0;
+        if (guidance && guidance.valleyDepth.length > 0 && guidance.valleyDepth[idx] > 0.5) {
+          // Scale erosion up to 2x in deep AE-predicted valleys
+          aeDepthBoost = 1.0 + Math.min(1.0, guidance.valleyDepth[idx] / 15) * 1.0;
+        }
+
+        let erosion = effectiveK * R * mesaProtection * headwardBoost * aeDepthBoost *
           Math.pow(A, effectiveAreaExp) * Math.pow(S, effectiveSlopeExp);
         erosion = Math.min(erosion, maxErosion);
         const eroded = dt * erosion;
