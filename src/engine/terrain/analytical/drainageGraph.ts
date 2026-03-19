@@ -241,10 +241,20 @@ export function generateGuidanceFields(
   const valleyWidth = new Float32Array(n);
   const valleyDepth = new Float32Array(n);
 
-  // AE2.4: Continuous network-wide field construction
-  // Walk each edge path and paint smooth valley corridors into the raster fields.
-  // Width/depth are regularized along each path (monotone widening downstream).
-  // Contributions accumulate via smooth-max, not nearest-segment switching.
+  // AE2.5: Continuous spline centerline + exact distance field
+  // For each edge, build a continuous polyline centerline with per-vertex
+  // attributes (width, depth, level). Then for each raster cell, compute
+  // exact distance to the nearest point on any centerline and derive
+  // valley profile from continuous interpolated attributes.
+
+  // Step 1: Build centerline segments with interpolated attributes
+  interface CenterSeg {
+    x1: number; z1: number; x2: number; z2: number;
+    w1: number; w2: number; // half-width at each endpoint
+    d1: number; d2: number; // max depth at each endpoint
+    level: number;
+  }
+  const centerlines: CenterSeg[] = [];
 
   for (const edge of graph.edges) {
     const src = graph.nodes[edge.from];
@@ -255,52 +265,91 @@ export function generateGuidanceFields(
 
     const levelScale = edge.level <= 1 ? 1.0 : edge.level === 2 ? 0.55 : 0.25;
 
-    // Walk along the smoothed path, painting corridor at each sample point
-    const sampleStep = Math.max(1, Math.floor(nPts / 40)); // ~40 samples per edge max
-    for (let p = 0; p < nPts; p += sampleStep) {
-      const px = path[p * 2], pz = path[p * 2 + 1];
-      const t = p / Math.max(1, nPts - 1); // 0 at src, 1 at dst
+    // Compute width/depth at each path vertex (monotone downstream)
+    for (let p = 0; p < nPts - 1; p++) {
+      const t1 = p / Math.max(1, nPts - 1);
+      const t2 = (p + 1) / Math.max(1, nPts - 1);
+      const a1 = Math.max(src.area * 0.5, src.area + (dst.area - src.area) * t1);
+      const a2 = Math.max(src.area * 0.5, src.area + (dst.area - src.area) * t2);
 
-      // Interpolate area along path (monotone: always use max of src/dst)
-      const pArea = src.area + (dst.area - src.area) * t;
-      const effectiveArea = Math.max(pArea, src.area * 0.5); // never drop below half src area
+      centerlines.push({
+        x1: path[p * 2], z1: path[p * 2 + 1],
+        x2: path[(p+1) * 2], z2: path[(p+1) * 2 + 1],
+        w1: Math.min(8, 1.2 + Math.pow(a1 / 800, 0.25) * 2) * cellSize,
+        w2: Math.min(8, 1.2 + Math.pow(a2 / 800, 0.25) * 2) * cellSize,
+        d1: Math.min(25, 1.5 + Math.pow(a1 / 400, 0.35) * 4) * levelScale,
+        d2: Math.min(25, 1.5 + Math.pow(a2 / 400, 0.35) * 4) * levelScale,
+        level: edge.level,
+      });
+    }
+  }
 
-      // Width/depth from area — smooth, continuous
-      const halfWidth = Math.min(8, 1.2 + Math.pow(effectiveArea / 800, 0.25) * 2) * cellSize;
-      const maxDepth = Math.min(25, 1.5 + Math.pow(effectiveArea / 400, 0.35) * 4) * levelScale;
+  // Step 2: Spatial grid for fast centerline lookup
+  const bucketSize = 12;
+  const bw = Math.ceil(w / bucketSize), bh = Math.ceil(h / bucketSize);
+  const buckets: number[][] = new Array(bw * bh);
+  for (let i = 0; i < buckets.length; i++) buckets[i] = [];
 
-      // Paint into raster within the corridor radius
-      const radiusCells = Math.ceil(halfWidth / cellSize) + 1;
-      const cx = Math.round(px), cz = Math.round(pz);
+  const maxHalfWidth = 10; // cells
+  for (let si = 0; si < centerlines.length; si++) {
+    const seg = centerlines[si];
+    const pad = maxHalfWidth;
+    const minBX = Math.max(0, Math.floor((Math.min(seg.x1, seg.x2) - pad) / bucketSize));
+    const maxBX = Math.min(bw - 1, Math.floor((Math.max(seg.x1, seg.x2) + pad) / bucketSize));
+    const minBZ = Math.max(0, Math.floor((Math.min(seg.z1, seg.z2) - pad) / bucketSize));
+    const maxBZ = Math.min(bh - 1, Math.floor((Math.max(seg.z1, seg.z2) + pad) / bucketSize));
+    for (let bz = minBZ; bz <= maxBZ; bz++) {
+      for (let bx = minBX; bx <= maxBX; bx++) {
+        buckets[bz * bw + bx].push(si);
+      }
+    }
+  }
 
-      for (let dz = -radiusCells; dz <= radiusCells; dz++) {
-        for (let dx = -radiusCells; dx <= radiusCells; dx++) {
-          const nx = cx + dx, nz = cz + dz;
-          if (nx < 0 || nx >= w || nz < 0 || nz >= h) continue;
+  // Step 3: For each raster cell, find closest point on any centerline
+  // and compute valley profile from interpolated attributes
+  for (let z = 0; z < h; z++) {
+    for (let x = 0; x < w; x++) {
+      const idx = z * w + x;
+      const bx = Math.floor(x / bucketSize), bz = Math.floor(z / bucketSize);
+      const bucket = buckets[bz * bw + bx];
 
-          const dist = Math.sqrt(dx * dx + dz * dz) * cellSize;
-          if (dist >= halfWidth) continue;
+      let bestDist = Infinity;
+      let bestHalfW = 0, bestDepth = 0, bestLevel = 3;
 
-          const ni = nz * w + nx;
-          const dt = dist / halfWidth;
-          // Smooth valley cross-section
-          const profile = 1 - dt * dt * (3 - 2 * dt); // smoothstep
-          const depthHere = maxDepth * profile;
-          const strengthHere = profile * levelScale;
+      for (const si of bucket) {
+        const seg = centerlines[si];
+        const sdx = seg.x2 - seg.x1, sdz = seg.z2 - seg.z1;
+        const len2 = sdx * sdx + sdz * sdz;
+        let t = len2 > 0 ? ((x - seg.x1) * sdx + (z - seg.z1) * sdz) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        const px = seg.x1 + sdx * t, pz = seg.z1 + sdz * t;
+        const dist = Math.sqrt((x - px) * (x - px) + (z - pz) * (z - pz)) * cellSize;
 
-          // Smooth-max accumulation: keep the deepest/strongest contribution
-          // This naturally handles junctions — overlapping valleys merge smoothly
-          if (depthHere > valleyDepth[ni]) {
-            valleyDepth[ni] = depthHere;
-            channelStrength[ni] = strengthHere;
-            valleyWidth[ni] = halfWidth;
-          } else if (depthHere > valleyDepth[ni] * 0.5) {
-            // Additive blending for nearby overlapping valleys
-            valleyDepth[ni] = valleyDepth[ni] * 0.7 + depthHere * 0.3;
-            channelStrength[ni] = Math.min(1, channelStrength[ni] + strengthHere * 0.2);
-          }
+        // Interpolate attributes at the closest point
+        const halfW = seg.w1 + (seg.w2 - seg.w1) * t;
 
-          if (dist < distToChannel[ni]) distToChannel[ni] = dist;
+        if (dist < halfW && dist < bestDist) {
+          bestDist = dist;
+          bestHalfW = halfW;
+          bestDepth = seg.d1 + (seg.d2 - seg.d1) * t;
+          bestLevel = seg.level;
+        }
+      }
+
+      if (bestDist < Infinity) {
+        distToChannel[idx] = bestDist;
+        const dt = bestDist / bestHalfW;
+        const profile = 1 - dt * dt * (3 - 2 * dt); // smoothstep
+        const levelScale = bestLevel <= 1 ? 1.0 : bestLevel === 2 ? 0.55 : 0.25;
+
+        const depthHere = bestDepth * profile;
+        const strengthHere = profile * levelScale;
+
+        // Smooth-max: keep deepest, blend secondaries
+        if (depthHere > valleyDepth[idx]) {
+          valleyDepth[idx] = depthHere;
+          channelStrength[idx] = strengthHere;
+          valleyWidth[idx] = bestHalfW;
         }
       }
     }
