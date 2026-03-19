@@ -27,12 +27,12 @@ export interface AnalyticalPrepassConfig {
 
 export const DEFAULT_ANALYTICAL_PREPASS: AnalyticalPrepassConfig = {
   enabled: true,
-  coarseGridSize: 256,
+  coarseGridSize: 384,       // AE1a tuning: higher res to reduce coarse-grid striping
   fixedPointIterations: 6,
   age: 1.0,
   erosionK: 0.0008,
   areaExponent: 0.4,
   slopeExponent: 1.0,
-  blendStrength: 0.7,
-  smoothingPasses: 2,
+  blendStrength: 0.55,       // AE1a tuning: reduced to keep backbone without over-imprint
+  smoothingPasses: 3,        // AE1a tuning: soften coarse artifacts
 };
