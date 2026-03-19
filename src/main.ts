@@ -828,9 +828,9 @@ if (isBenchmark) {
       app.centerCZ = Infinity;
       app.updateChunks();
 
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 200));
       app.update();
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 100));
 
       const image = await app.captureFrame();
       const label = `benchmark_${stage}_${cam.name}`;
@@ -862,15 +862,13 @@ if (isBenchmark) {
     console.log(`[benchmark] capture complete (${stage})`);
   };
 
-  // Auto-capture on load: ?capture=label triggers benchmark capture after rendering stabilizes
+  // Auto-capture on load: ?capture=label triggers fast benchmark capture
   const captureLabel = params.get('capture');
   if (captureLabel) {
     (async () => {
-      // Wait for rendering to stabilize
-      console.log(`[auto-capture] waiting for render to stabilize...`);
-      await new Promise(r => setTimeout(r, 3000));
+      console.log(`[auto-capture] waiting for initial render...`);
+      await new Promise(r => setTimeout(r, 1500));
       app.update();
-      await new Promise(r => setTimeout(r, 1000));
       console.log(`[auto-capture] triggering capture: ${captureLabel}`);
       await (window as any).__benchmarkCapture(captureLabel);
       console.log(`[auto-capture] done`);
