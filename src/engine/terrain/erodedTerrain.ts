@@ -54,10 +54,10 @@ export interface ErosionConfig {
   hydraulic: HydraulicParams & { enabled: boolean };
   /** Fan and debris-flow deposition (runs after stream-power) */
   fan: FanParams & { enabled: boolean };
-  /** Channel geometry shaping (optional override) */
-  channelGeometry?: Partial<ChannelGeometryParams>;
-  /** Hillslope transport (optional override) */
-  hillslope?: Partial<HillslopeParams>;
+  /** Channel geometry shaping (optional override; set enabled:false to skip) */
+  channelGeometry?: Partial<ChannelGeometryParams> & { enabled?: boolean };
+  /** Hillslope transport (optional override; set enabled:false to skip) */
+  hillslope?: Partial<HillslopeParams> & { enabled?: boolean };
   /** Lateral erosion (optional override) */
   lateral?: Partial<LateralErosionParams>;
   /** Terrace formation (optional — defaults to enabled) */

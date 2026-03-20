@@ -501,18 +501,24 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
       // Re-apply clay mode after terrain swap
       app.setClayMode(true);
 
-      // H2.5a: Run direct grid diagnostics for micro mode
+      // H2.5c: Run direct grid diagnostics for micro mode
       if (mn && stageGrids.size > 0) {
         const { runMicroDiagnostics } = await import('./engine/terrain/microDiagnostics');
+        const { getMicroBenchmark: getMB2 } = await import('./engine/terrain/microBenchmarks');
+        const microInfo = getMB2(mn);
         const initialGrid = benchHF.grid;
         const finalGrid = artifacts.heightGrid;
         shell.statusText = 'Running micro diagnostics...';
         const metrics = await runMicroDiagnostics(
           initialGrid, stageGrids, finalGrid,
-          benchHF.gridSize, benchHF.extent, `${mn}-h25b`,
+          benchHF.gridSize, benchHF.extent, `${mn}-h25d`,
+          microInfo?.diagnosticZSections,
+          microInfo?.detrendedMetrics,
+          artifacts.provenance,  // actual propagated provenance from stream-power
+          microInfo?.notchCenters,
         );
-        (window as any).__h25aMetrics = metrics;
-        (window as any).__h25aStageGrids = stageGrids;
+        (window as any).__microMetrics = metrics;
+        (window as any).__microStageGrids = stageGrids;
       }
 
       runtimeStore.setDomain(newDomain);

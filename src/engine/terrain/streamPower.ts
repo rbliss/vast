@@ -95,7 +95,7 @@ const FACET_N2 = [2, 1, 0, 3, 5, 6, 7, 4]; // second neighbor of each facet
 
 function computeFlowAccumulation(
   grid: Float32Array, w: number, h: number, cellSize: number,
-): { area: Float32Array; receiver: Int32Array } {
+): { area: Float32Array; receiver: Int32Array; sorted: Uint32Array; recv1: Int32Array; recv2: Int32Array; frac1: Float32Array } {
   const n = w * h;
   const area = new Float32Array(n);
   area.fill(1.0);
@@ -197,7 +197,55 @@ function computeFlowAccumulation(
     }
   }
 
-  return { area, receiver };
+  return { area, receiver, sorted, recv1, recv2, frac1 };
+}
+
+/**
+ * H2.5d: Propagate a provenance field downstream using the same D-inf routing.
+ * Each cell starts with a seed value (e.g., x-position-based left/right identity).
+ * Downstream cells get area-weighted average of upstream provenance.
+ * Returns: per-cell provenance in [0,1] (0 = right-system, 1 = left-system).
+ */
+function propagateProvenance(
+  seed: Float32Array,
+  area: Float32Array,
+  sorted: Uint32Array,
+  recv1: Int32Array, recv2: Int32Array, frac1: Float32Array,
+  n: number,
+): Float32Array {
+  // Track provenance*area product and total area for weighted average
+  const provArea = new Float32Array(n);
+  const totalArea = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    provArea[i] = seed[i]; // each cell contributes its own seed * 1 cell
+    totalArea[i] = 1;
+  }
+
+  // Propagate downstream (same sorted order as flow accumulation)
+  for (let i = 0; i < sorted.length; i++) {
+    const idx = sorted[i];
+    const pa = provArea[idx];
+    const ta = totalArea[idx];
+    const r1 = recv1[idx];
+    const r2 = recv2[idx];
+    const f1 = frac1[idx];
+
+    if (r1 >= 0) {
+      provArea[r1] += pa * f1;
+      totalArea[r1] += ta * f1;
+    }
+    if (r2 >= 0) {
+      provArea[r2] += pa * (1 - f1);
+      totalArea[r2] += ta * (1 - f1);
+    }
+  }
+
+  // Compute weighted average provenance
+  const prov = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    prov[i] = totalArea[i] > 0 ? provArea[i] / totalArea[i] : seed[i];
+  }
+  return prov;
 }
 
 /**
@@ -455,6 +503,8 @@ export interface StreamPowerResult {
   slopes: Float32Array;
   /** Accumulated deposition at each cell (total material deposited over all iterations) */
   deposition: Float32Array;
+  /** H2.5d: Last-iteration headwater provenance field (0=right system, 1=left system) */
+  provenance: Float32Array;
 }
 
 /**
@@ -494,6 +544,7 @@ export function streamPowerErosion(
   const deposition = new Float32Array(n);
 
   let lastArea: Float32Array = new Float32Array(n);
+  let lastProvenance: Float32Array = new Float32Array(n);
   let lastReceiver: Int32Array = new Int32Array(n);
   let lastSlopes: Float32Array = new Float32Array(n);
 
@@ -538,17 +589,35 @@ export function streamPowerErosion(
 
     // Step 1: Flow accumulation + receiver graph
     const flowResult = computeFlowAccumulation(grid, w, h, cellSize);
-    const { area, receiver } = flowResult;
+    const { area, receiver, sorted, recv1, recv2, frac1 } = flowResult;
 
     // H2.1c: Convert drainage area from cell-count to world-area units
-    // This makes all thresholds scale-independent across grid resolutions
     const cellArea = cellSize * cellSize;
     for (let i = 0; i < n; i++) {
       area[i] *= cellArea;
     }
 
+    // H2.5d: Compute headwater provenance for divide preservation.
+    // Seed: left-side cells get provenance=1, right-side get 0, smooth transition at x=0.
+    // Propagated downstream: balanced provenance (≈0.5) = interfluve divide zone.
+    const provSeed = new Float32Array(n);
+    for (let z2 = 0; z2 < h; z2++) {
+      for (let x2 = 0; x2 < w; x2++) {
+        const wx = -w / 2 + x2; // approximate world x in grid coords
+        provSeed[z2 * w + x2] = Math.max(0, Math.min(1, 0.5 - wx / (w * 0.3)));
+      }
+    }
+    const provenance = propagateProvenance(provSeed, area, sorted, recv1, recv2, frac1, n);
+    // dividePenalty: 1.0 where both systems contribute equally (provenance ≈ 0.5)
+    const dividePenalty = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      dividePenalty[i] = 1.0 - 2.0 * Math.abs(provenance[i] - 0.5);
+      if (dividePenalty[i] < 0) dividePenalty[i] = 0;
+    }
+
     lastArea = area as Float32Array;
     lastReceiver = receiver as Int32Array;
+    lastProvenance = provenance;
 
     // Step 2: Slopes
     const slopes = computeSlopes(grid, w, h, cellSize);
@@ -717,6 +786,13 @@ export function streamPowerErosion(
           channelThreshold *= Math.max(0.1, 1.0 - proto * 0.9);
         }
 
+        // H2.5d: Divide preservation — raise threshold at interfluve zones
+        // This prevents stream-power incision from chewing across the divide
+        const divPen = dividePenalty[idx];
+        if (divPen > 0.1) {
+          channelThreshold *= 1.0 + divPen * 3.0; // up to 4x threshold at balanced divide
+        }
+
         // Slope-area index (Montgomery-Dietrich criterion, world-scale)
         const slopeAreaIndex = A * S;
 
@@ -776,7 +852,10 @@ export function streamPowerErosion(
           }
         }
 
-        let erosion = effectiveK * R * mesaProtection * headwardBoost * aeBoost *
+        // H2.5d: Reduce erosion intensity at divide cells
+        const divideProtection = Math.max(0.15, 1.0 - divPen * 0.85);
+
+        let erosion = effectiveK * R * mesaProtection * headwardBoost * aeBoost * divideProtection *
           Math.pow(A, effectiveAreaExp) * Math.pow(S, effectiveSlopeExp);
         erosion = Math.min(erosion, maxErosion);
         const eroded = dt * erosion;
@@ -792,103 +871,142 @@ export function streamPowerErosion(
       }
     }
 
-    // Step 3b: Lateral erosion / canyon widening (H2.5b — selective notch-basin retreat)
-    // Only applies strong widening to cells in the dominant drainage trunk system.
-    // Uses directional rim detection (plateau-side relief) instead of generic local relief.
-    // Separates headcut retreat (upstream incision boost) from sidewall widening.
+    // Step 3b: Lateral erosion / canyon widening (H2.5c — split trunk + rim drivers)
+    // Two independent widening drivers:
+    //   trunkFactor: mature channel widening (scales with drainage area)
+    //   rimFactor: escarpment headcut retreat (directional upstream relief)
     {
       const lp = lateralParams ?? DEFAULT_LATERAL;
       const lateralRate = lp.lateralRate;
       const bankSlopeThreshold = lp.bankSlopeThreshold;
       const minChannelArea = lp.minChannelArea;
-      const maxReach = lp.maxReach;
+      const baseReach = lp.maxReach;
       const lateralBuf = new Float32Array(n);
 
-      // H2.5b: Find the dominant trunk drainage area for selectivity gating.
-      // Only cells with area >= trunkThreshold * maxArea get strong widening.
+      const trunkReachBonus = 6;
+      const rimReachBonus = 4;
+
+      // H2.5d.1: Use provenance-based dividePenalty (computed per-iteration above)
+      // and global max area for trunk scaling (system-local via provenance, not outlets)
       let maxArea = 0;
       for (let i = 0; i < n; i++) {
         if (area[i] > maxArea) maxArea = area[i];
       }
-      const trunkThreshold = maxArea * 0.05; // top 5% of drainage area = trunk system
+
+      // Precompute smoothed trunk tangent directions from receiver chain.
+      const trunkTangentX = new Float32Array(n);
+      const trunkTangentZ = new Float32Array(n);
+      const smoothArea = new Float32Array(n);
+      for (let i = 0; i < n; i++) smoothArea[i] = area[i];
+
+      for (let z2 = 1; z2 < h - 1; z2++) {
+        for (let x2 = 1; x2 < w - 1; x2++) {
+          const i = z2 * w + x2;
+          if (area[i] < minChannelArea) continue;
+
+          let tdx = 0, tdz = 0;
+          let cur = i;
+          let areaSum = area[i], areaCount = 1;
+          for (let step = 0; step < 3; step++) {
+            const r = receiver[cur];
+            if (r < 0 || r === cur) break;
+            const rx = r % w, rz = (r - rx) / w;
+            const cx = cur % w, cz = (cur - cx) / w;
+            tdx += rx - cx;
+            tdz += rz - cz;
+            cur = r;
+            areaSum += area[r];
+            areaCount++;
+          }
+          const tlen = Math.sqrt(tdx * tdx + tdz * tdz);
+          if (tlen > 0.001) {
+            trunkTangentX[i] = tdx / tlen;
+            trunkTangentZ[i] = tdz / tlen;
+          } else {
+            const dhdx2 = (grid[i + 1] - grid[i - 1]) / (2 * cellSize);
+            const dhdz2 = (grid[i + w] - grid[i - w]) / (2 * cellSize);
+            const gl = Math.sqrt(dhdx2 * dhdx2 + dhdz2 * dhdz2);
+            if (gl > 0.001) {
+              trunkTangentX[i] = -dhdx2 / gl;
+              trunkTangentZ[i] = -dhdz2 / gl;
+            }
+          }
+          smoothArea[i] = areaSum / areaCount;
+        }
+      }
 
       for (let z = 3; z < h - 3; z++) {
         for (let x = 3; x < w - 3; x++) {
           const idx = z * w + x;
-          const A_here = area[idx];
+          const A_here = smoothArea[idx];
           if (A_here < minChannelArea) continue;
 
           const hHere = grid[idx];
 
-          // Gradient-based flow direction for perpendicular bank identification
-          const dhdx = (grid[idx + 1] - grid[idx - 1]) / (2 * cellSize);
-          const dhdz = (grid[idx + w] - grid[idx - w]) / (2 * cellSize);
-          const gradLen = Math.sqrt(dhdx * dhdx + dhdz * dhdz);
-          if (gradLen < 0.001) continue;
-          const fdx = -dhdx / gradLen;
-          const fdz = -dhdz / gradLen;
+          // H2.5c: Use precomputed trunk tangent for bank normal direction
+          const fdx = trunkTangentX[idx];
+          const fdz = trunkTangentZ[idx];
+          if (fdx === 0 && fdz === 0) continue;
+          // Bank normal = perpendicular to trunk tangent
           const px = -fdz;
           const pz = fdx;
 
-          // Channel power scales with drainage area
+          // Channel power scales with smoothed drainage area
           let channelPower = Math.min(4.0, Math.pow(A_here / 60.0, 0.4));
           if (corridor) {
             const guide = corridor[idx];
             channelPower *= 1.0 + guide * 0.8;
           }
 
-          // H2.5b: Selectivity — only apply strong widening to trunk system
-          const isTrunk = A_here >= trunkThreshold;
+          // ── Driver 1: trunkFactor (mature channel widening) ──
+          // H2.5d.1: Uses global max area with provenance-based divide penalty.
+          const trunkAreaThreshold = maxArea * 0.12;
+          let trunkFactor = Math.max(0, Math.min(1,
+            (A_here - minChannelArea) / Math.max(1, trunkAreaThreshold - minChannelArea)));
+          // H2.5d.1: Suppress widening at interfluve divides (provenance-based)
+          const divPenLateral = dividePenalty[idx];
+          trunkFactor *= Math.max(0, 1.0 - divPenLateral);
 
-          // H2.5b: Directional rim detection
-          // Measure relief in the UPSTREAM direction (opposite to flow) vs downstream.
-          // True headcut/rim: high terrain upstream (plateau), low downstream (piedmont).
-          // Canyon interior: roughly equal relief on both sides — NOT a rim.
-          let upstreamRelief = 0, downstreamRelief = 0;
-          for (let step = 1; step <= 6; step++) {
-            // Upstream = opposite to flow direction
-            const ux = Math.round(x - fdx * step), uz = Math.round(z - fdz * step);
-            if (ux >= 0 && ux < w && uz >= 0 && uz < h) {
-              const ur = grid[uz * w + ux] - hHere;
-              if (ur > upstreamRelief) upstreamRelief = ur;
+          // ── Driver 2: rimFactor (directional escarpment retreat) ──
+          // Only for trunk cells. Measures upstream vs downstream relief.
+          let rimFactor = 0;
+          if (trunkFactor > 0.2) {
+            let upstreamRelief = 0, downstreamRelief = 0;
+            for (let step = 1; step <= 6; step++) {
+              const ux = Math.round(x - fdx * step), uz = Math.round(z - fdz * step);
+              if (ux >= 0 && ux < w && uz >= 0 && uz < h) {
+                const ur = grid[uz * w + ux] - hHere;
+                if (ur > upstreamRelief) upstreamRelief = ur;
+              }
+              const dx2 = Math.round(x + fdx * step), dz2 = Math.round(z + fdz * step);
+              if (dx2 >= 0 && dx2 < w && dz2 >= 0 && dz2 < h) {
+                const dr = grid[dz2 * w + dx2] - hHere;
+                if (dr > downstreamRelief) downstreamRelief = dr;
+              }
             }
-            // Downstream = along flow direction
-            const dx2 = Math.round(x + fdx * step), dz2 = Math.round(z + fdz * step);
-            if (dx2 >= 0 && dx2 < w && dz2 >= 0 && dz2 < h) {
-              const dr = grid[dz2 * w + dx2] - hHere;
-              if (dr > downstreamRelief) downstreamRelief = dr;
-            }
+            const upstreamDominance = upstreamRelief / Math.max(1, upstreamRelief + downstreamRelief);
+            rimFactor = Math.min(2.0, (upstreamRelief / 12.0) * upstreamDominance);
           }
-          // rimFactor: high only when upstream relief is high AND downstream relief is low
-          // This distinguishes true rim (plateau behind, drop ahead) from canyon interior
-          const upstreamDominance = upstreamRelief / Math.max(1, upstreamRelief + downstreamRelief);
-          const rimFactor = isTrunk
-            ? Math.min(2.0, (upstreamRelief / 12.0) * upstreamDominance)
-            : 0;  // non-trunk cells get NO rim boost
 
-          // H2.5b: Headcut retreat boost — extra incision at channel heads near the rim
-          // A headcut is where: high upstream relief, channel just barely qualifies, receiver has more area
+          // ── Headcut retreat boost (rim-only) ──
           const recv = receiver[idx];
           if (rimFactor > 0.3 && recv >= 0 && recv !== idx) {
             const recvArea = area[recv];
-            // Channel head: this cell's area is much less than receiver's (near channel start)
             const headRatio = A_here / Math.max(1, recvArea);
-            if (headRatio < 0.5 && upstreamRelief > 5) {
-              // Direct headcut incision: bite into the rim
+            if (headRatio < 0.5) {
               const headcutErosion = Math.min(
-                0.5 * rimFactor * upstreamRelief / 20.0 * channelPower * cellSize,
-                upstreamRelief * 0.15,
+                0.5 * rimFactor * channelPower * cellSize,
+                10.0 * 0.15,
               );
-              if (headcutErosion > 0) {
-                lateralBuf[idx] += headcutErosion;
-              }
+              if (headcutErosion > 0) lateralBuf[idx] += headcutErosion;
             }
           }
 
-          // Scale lateral rate for trunk cells with rim exposure
-          const localLateralRate = lateralRate * (1.0 + rimFactor * 1.0);
-          const localMaxReach = isTrunk ? maxReach : Math.min(maxReach, 4);
-          const localBankThreshold = bankSlopeThreshold * Math.max(0.5, 1.0 - rimFactor * 0.25);
+          // ── Combined widening formula ──
+          const widenFactor = 1.0 + trunkFactor * 1.5 + rimFactor * 1.0;
+          const localLateralRate = lateralRate * widenFactor;
+          const localMaxReach = Math.round(baseReach + trunkFactor * trunkReachBonus + rimFactor * rimReachBonus);
+          const localBankThreshold = bankSlopeThreshold * Math.max(0.4, 1.0 - trunkFactor * 0.2 - rimFactor * 0.15);
 
           // Check both bank sides, multiple cells outward
           for (const side of [-1, 1]) {
@@ -958,5 +1076,5 @@ export function streamPowerErosion(
     }
   }
 
-  return { area: lastArea, receiver: lastReceiver, slopes: lastSlopes, deposition };
+  return { area: lastArea, receiver: lastReceiver, slopes: lastSlopes, deposition, provenance: lastProvenance };
 }

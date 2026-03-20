@@ -40,9 +40,11 @@ self.onmessage = (e: MessageEvent) => {
       const artifacts = executeBake(msg.request, msg.preSampledGrid, onStageCapture, aeGuidance);
 
       // Transfer large buffers instead of copying
+      const transfer: Transferable[] = [artifacts.heightGrid.buffer, artifacts.depositionMap.buffer];
+      if (artifacts.provenance) transfer.push(artifacts.provenance.buffer);
       self.postMessage(
         { type: 'result', artifacts },
-        { transfer: [artifacts.heightGrid.buffer, artifacts.depositionMap.buffer] },
+        { transfer },
       );
     } catch (err) {
       self.postMessage({

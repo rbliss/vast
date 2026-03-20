@@ -25,6 +25,12 @@ export interface MicroBenchmark {
   camera: { camX: number; camZ: number; clearance: number; tgtX: number; tgtZ: number; tgtClearance: number };
   /** Optional per-micro erosion config overrides (merged with BENCHMARK_EROSION) */
   erosionOverrides?: Partial<ErosionConfig>;
+  /** z-coordinates for cross-section diagnostics (default: [-30, -15, 0]) */
+  diagnosticZSections?: number[];
+  /** Use detrended baseline for metrics (for sloped terrain like trunk-widen) */
+  detrendedMetrics?: boolean;
+  /** Notch centers for per-notch metrics (multi-canyon cases) */
+  notchCenters?: { leftX: number; rightX: number; divideX: number };
 }
 
 const GRID = 256;
@@ -149,6 +155,43 @@ function doubleNotch(): MicroBenchmark {
     description: 'Tributary competition from two adjacent escarpment hollows',
     heightfield: hf,
     camera: { camX: 100, camZ: -80, clearance: 70, tgtX: 0, tgtZ: -10, tgtClearance: 15 },
+    diagnosticZSections: [-30, -15, 0],
+    notchCenters: { leftX: -40, rightX: 40, divideX: 0 },
+    // H2.5d T2: lateral + hillslope for double-notch competition
+    erosionOverrides: {
+      streamPower: {
+        enabled: true,
+        iterations: 120,
+        erosionK: 0.010,
+        areaExponent: 0.45,
+        slopeExponent: 1.12,
+        dt: 1.0,
+        diffusionRate: 0.0004,
+        minSlope: 0.001,
+        upliftRate: 0.0,
+        maxErosion: 2.5,
+        depositionEnabled: true,
+        sedimentFraction: 0.6,
+        transportK: 0.003,
+        transportAreaExp: 0.4,
+        transportSlopeExp: 1.1,
+      },
+      channelGeometry: { enabled: false },
+      hillslope: {
+        enabled: true,
+        iterations: 12,
+        criticalSlope: 1.15,
+        diffusionRate: 0.0025,
+        transferRate: 0.35,
+        debrisReach: 4,
+      },
+      lateral: {
+        bankSlopeThreshold: 0.24,
+        lateralRate: 0.75,
+        maxReach: 9,
+        minChannelArea: 12,
+      },
+    },
   };
 }
 
@@ -212,6 +255,43 @@ function trunkWiden(): MicroBenchmark {
     description: 'Pre-carved narrow channel — test lateral erosion widening',
     heightfield: hf,
     camera: { camX: 80, camZ: -80, clearance: 50, tgtX: 0, tgtZ: 0, tgtClearance: 10 },
+    diagnosticZSections: [-80, 0, 80],
+    detrendedMetrics: true,
+    // H2.5c T2: lateral + hillslope (channelGeometry still off)
+    erosionOverrides: {
+      streamPower: {
+        enabled: true,
+        iterations: 80,
+        erosionK: 0.008,
+        areaExponent: 0.45,
+        slopeExponent: 1.05,
+        dt: 1.0,
+        diffusionRate: 0.0002,
+        minSlope: 0.001,
+        upliftRate: 0.0,
+        maxErosion: 1.8,
+        depositionEnabled: true,
+        sedimentFraction: 0.6,
+        transportK: 0.003,
+        transportAreaExp: 0.4,
+        transportSlopeExp: 1.1,
+      },
+      channelGeometry: { enabled: false },
+      hillslope: {
+        enabled: true,
+        iterations: 12,
+        criticalSlope: 1.1,
+        diffusionRate: 0.002,
+        transferRate: 0.35,
+        debrisReach: 4,
+      },
+      lateral: {
+        bankSlopeThreshold: 0.18,
+        lateralRate: 1.0,
+        maxReach: 12,
+        minChannelArea: 8,
+      },
+    },
   };
 }
 

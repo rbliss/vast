@@ -170,8 +170,8 @@ export interface CanyonMetrics {
   /** z-sections with before/after comparison */
   sections: {
     z: number;
-    before: { depth: number; canyonWidth: number; centerX: number };
-    after: { depth: number; canyonWidth: number; centerX: number };
+    before: { depth: number; canyonWidth: number; bedWidth: number; centerX: number };
+    after: { depth: number; canyonWidth: number; bedWidth: number; centerX: number };
     deltaDepth: number;
     deltaCanyonWidth: number;
   }[];
@@ -183,11 +183,103 @@ export interface CanyonMetrics {
 
 /**
  * Measure a single cross-section's canyon geometry.
- * Finds the deepest point in the center 60%, then searches outward
- * to find actual bank-top/rim shoulders.
+ *
+ * Default mode: finds the deepest point in the center 60%, then searches
+ * outward to find actual bank-top/rim shoulders.
+ *
+ * Detrended mode (`detrended: true`): fits a linear baseline from the
+ * far-left and far-right edges of the cross-section, subtracts it, then
+ * measures bed depth below baseline.  Width is reported at two thresholds:
+ *   - `canyonWidth` — at 50% of detrended depth
+ *   - `bedWidth`    — at 25% of detrended depth (narrower, near the bed)
+ *
+ * This is robust on sloped terrain where rim-shoulder detection fails.
  */
-function measureCanyon(cs: CrossSection): { depth: number; canyonWidth: number; centerX: number; leftRimX: number; rightRimX: number } {
+function measureCanyon(
+  cs: CrossSection,
+  detrended = false,
+): { depth: number; canyonWidth: number; bedWidth: number; centerX: number; leftRimX: number; rightRimX: number } {
   const pts = cs.points;
+
+  if (detrended) {
+    // ── Detrended mode ──
+    // Fit baseline from far-left and far-right edge averages (use outer 5%)
+    const edgeN = Math.max(1, Math.floor(pts.length * 0.05));
+    let leftSum = 0, rightSum = 0;
+    for (let i = 0; i < edgeN; i++) leftSum += pts[i].h;
+    for (let i = pts.length - edgeN; i < pts.length; i++) rightSum += pts[i].h;
+    const leftH = leftSum / edgeN;
+    const rightH = rightSum / edgeN;
+    const leftX = pts[0].x;
+    const rightX = pts[pts.length - 1].x;
+    const xRange = rightX - leftX;
+    // baseline(x) = leftH + (rightH - leftH) * (x - leftX) / xRange
+    const slope = xRange > 0 ? (rightH - leftH) / xRange : 0;
+
+    // Subtract baseline to get detrended heights
+    const det: number[] = new Array(pts.length);
+    for (let i = 0; i < pts.length; i++) {
+      const baseline = leftH + slope * (pts[i].x - leftX);
+      det[i] = pts[i].h - baseline; // negative = below baseline
+    }
+
+    // Find deepest point (most negative detrended value)
+    let minDet = Infinity, minIdx = 0;
+    for (let i = 0; i < det.length; i++) {
+      if (det[i] < minDet) { minDet = det[i]; minIdx = i; }
+    }
+    const depth = -minDet; // positive depth below baseline
+    const centerX = pts[minIdx].x;
+
+    // Width at a given fraction of depth: find leftmost and rightmost crossings
+    const widthAtFraction = (frac: number): { left: number; right: number } => {
+      const threshold = -depth * frac; // detrended threshold (negative)
+      let left = pts[minIdx].x;
+      let right = pts[minIdx].x;
+      // Scan left from min
+      for (let i = minIdx; i >= 0; i--) {
+        if (det[i] >= threshold) {
+          // Interpolate between i and i+1
+          if (i < minIdx && i + 1 < pts.length) {
+            const t = (threshold - det[i]) / (det[i + 1] - det[i]);
+            left = pts[i].x + t * (pts[i + 1].x - pts[i].x);
+          } else {
+            left = pts[i].x;
+          }
+          break;
+        }
+        left = pts[i].x;
+      }
+      // Scan right from min
+      for (let i = minIdx; i < pts.length; i++) {
+        if (det[i] >= threshold) {
+          if (i > minIdx && i - 1 >= 0) {
+            const t = (threshold - det[i]) / (det[i - 1] - det[i]);
+            right = pts[i].x + t * (pts[i - 1].x - pts[i].x);
+          } else {
+            right = pts[i].x;
+          }
+          break;
+        }
+        right = pts[i].x;
+      }
+      return { left, right };
+    };
+
+    const w50 = widthAtFraction(0.5); // canyon width at 50% depth
+    const w25 = widthAtFraction(0.25); // bed width at 25% depth
+
+    return {
+      depth,
+      canyonWidth: w50.right - w50.left,
+      bedWidth: w25.right - w25.left,
+      centerX,
+      leftRimX: w50.left,
+      rightRimX: w50.right,
+    };
+  }
+
+  // ── Default (rim-shoulder) mode ──
   const margin = Math.floor(pts.length * 0.2);
   const center = pts.slice(margin, pts.length - margin);
 
@@ -225,26 +317,30 @@ function measureCanyon(cs: CrossSection): { depth: number; canyonWidth: number; 
   const depth = rimH - minH;
   const canyonWidth = rightRimX - leftRimX;
 
-  return { depth, canyonWidth, centerX, leftRimX, rightRimX };
+  // In rim-shoulder mode, bedWidth defaults to canyonWidth (no detrended narrowing info)
+  return { depth, canyonWidth, bedWidth: canyonWidth, centerX, leftRimX, rightRimX };
 }
 
 /**
  * Compute full canyon metrics comparing initial and final grids.
+ * When `detrended` is true, uses baseline-subtraction instead of rim-shoulder detection.
  */
 export function computeCanyonMetrics(
   initial: Float32Array, final: Float32Array,
   gridSize: number, extent: number,
+  customZSections?: number[],
+  detrended = false,
 ): CanyonMetrics {
-  const zSections = [-30, -15, 0];
+  const zSections = customZSections ?? [-30, -15, 0];
   const sections = zSections.map(z => {
     const beforeCS = extractCrossSection(initial, gridSize, extent, z);
     const afterCS = extractCrossSection(final, gridSize, extent, z);
-    const before = measureCanyon(beforeCS);
-    const after = measureCanyon(afterCS);
+    const before = measureCanyon(beforeCS, detrended);
+    const after = measureCanyon(afterCS, detrended);
     return {
       z,
-      before: { depth: before.depth, canyonWidth: before.canyonWidth, centerX: before.centerX },
-      after: { depth: after.depth, canyonWidth: after.canyonWidth, centerX: after.centerX },
+      before: { depth: before.depth, canyonWidth: before.canyonWidth, bedWidth: before.bedWidth, centerX: before.centerX },
+      after: { depth: after.depth, canyonWidth: after.canyonWidth, bedWidth: after.bedWidth, centerX: after.centerX },
       deltaDepth: after.depth - before.depth,
       deltaCanyonWidth: after.canyonWidth - before.canyonWidth,
     };
@@ -286,7 +382,7 @@ export function computeCanyonMetrics(
 
   // Bank asymmetry at z=-15 (escarpment face)
   const faceCS = extractCrossSection(final, gridSize, extent, -15);
-  const faceM = measureCanyon(faceCS);
+  const faceM = measureCanyon(faceCS, detrended);
   const leftDist = Math.abs(faceM.centerX - faceM.leftRimX);
   const rightDist = Math.abs(faceM.rightRimX - faceM.centerX);
   const asymRatio = leftDist / Math.max(0.1, rightDist);
@@ -322,6 +418,15 @@ export async function uploadDiagnostic(
  * Run full micro diagnostics: heightmaps, heatmaps, cross-sections, metrics.
  * Uploads all artifacts to the API server and saves metrics to window.
  */
+export interface PerNotchMetrics {
+  z: number;
+  left: { depth: number; bed: number };
+  right: { depth: number; bed: number };
+  divideH: number;
+  divideAboveLeft: number;
+  divideAboveRight: number;
+}
+
 export async function runMicroDiagnostics(
   initialGrid: Float32Array,
   stageGrids: Map<string, Float32Array>,
@@ -329,6 +434,10 @@ export async function runMicroDiagnostics(
   gridSize: number,
   extent: number,
   label: string,
+  zSections?: number[],
+  detrended = false,
+  provenanceField?: Float32Array,
+  notchCenters?: { leftX: number; rightX: number; divideX: number },
 ): Promise<CanyonMetrics> {
   // Shared height range for all heightmaps (consistent coloring)
   let globalMin = Infinity, globalMax = -Infinity;
@@ -360,8 +469,9 @@ export async function runMicroDiagnostics(
     }
   }
 
-  // 3. Cross-section SVGs at z=-30, z=-15, z=0
-  for (const z of [-30, -15, 0]) {
+  // 3. Cross-section SVGs
+  const diagZSections = zSections ?? [-30, -15, 0];
+  for (const z of diagZSections) {
     const beforeCS = extractCrossSection(initialGrid, gridSize, extent, z);
     const afterCS = extractCrossSection(finalGrid, gridSize, extent, z);
     const svg = crossSectionsToSvg(beforeCS, afterCS);
@@ -369,15 +479,37 @@ export async function runMicroDiagnostics(
     uploads.push(uploadDiagnostic(svgBase64, `${label}-xsection-z${z}`, 'svg'));
   }
 
+  // 3b. Provenance heatmap (if available)
+  if (provenanceField && provenanceField.length === gridSize * gridSize) {
+    const canvas = document.createElement('canvas');
+    canvas.width = gridSize;
+    canvas.height = gridSize;
+    const ctx = canvas.getContext('2d')!;
+    const img = ctx.createImageData(gridSize, gridSize);
+    for (let i = 0; i < provenanceField.length; i++) {
+      const p = provenanceField[i];
+      // Red = right system (p≈0), Blue = left system (p≈1), White = balanced divide (p≈0.5)
+      const balance = 1 - 2 * Math.abs(p - 0.5); // 0 at extremes, 1 at 0.5
+      img.data[i * 4 + 0] = Math.round(255 * (1 - p) * (1 - balance * 0.5)); // red for right
+      img.data[i * 4 + 1] = Math.round(255 * balance); // green for divide
+      img.data[i * 4 + 2] = Math.round(255 * p * (1 - balance * 0.5)); // blue for left
+      img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    const provBase64 = canvas.toDataURL('image/png').split(',')[1];
+    uploads.push(uploadDiagnostic(provBase64, `${label}-provenance`));
+  }
+
   // Wait for all uploads
   await Promise.all(uploads);
 
   // 4. Compute proper metrics
-  const metrics = computeCanyonMetrics(initialGrid, finalGrid, gridSize, extent);
+  const metrics = computeCanyonMetrics(initialGrid, finalGrid, gridSize, extent, diagZSections, detrended);
 
   console.log(`[micro-metrics] ${label}:`);
   for (const s of metrics.sections) {
-    console.log(`  z=${s.z}: depth ${s.before.depth.toFixed(1)} → ${s.after.depth.toFixed(1)} (Δ${s.deltaDepth.toFixed(1)}), width ${s.before.canyonWidth.toFixed(1)} → ${s.after.canyonWidth.toFixed(1)} (Δ${s.deltaCanyonWidth.toFixed(1)})`);
+    const wdRatio = s.after.depth > 0 ? (s.after.canyonWidth / s.after.depth) : 0;
+    console.log(`  z=${s.z}: depth ${s.before.depth.toFixed(1)} → ${s.after.depth.toFixed(1)} (Δ${s.deltaDepth.toFixed(1)}), width ${s.before.canyonWidth.toFixed(1)} → ${s.after.canyonWidth.toFixed(1)} (Δ${s.deltaCanyonWidth.toFixed(1)}), bedWidth ${s.after.bedWidth.toFixed(1)}, w/d ratio ${wdRatio.toFixed(2)}`);
   }
   console.log(`  headcut retreat: ${metrics.headcutRetreatDistance.toFixed(1)} units from rim`);
   console.log(`  bank asymmetry: L=${metrics.bankAsymmetry.leftRimDist.toFixed(1)} R=${metrics.bankAsymmetry.rightRimDist.toFixed(1)} ratio=${metrics.bankAsymmetry.ratio.toFixed(2)}`);
@@ -388,8 +520,8 @@ export async function runMicroDiagnostics(
     timestamp: new Date().toISOString(),
     sections: metrics.sections.map(s => ({
       z: s.z,
-      before: { depth: +s.before.depth.toFixed(1), canyonWidth: +s.before.canyonWidth.toFixed(1) },
-      after: { depth: +s.after.depth.toFixed(1), canyonWidth: +s.after.canyonWidth.toFixed(1) },
+      before: { depth: +s.before.depth.toFixed(1), canyonWidth: +s.before.canyonWidth.toFixed(1), bedWidth: +s.before.bedWidth.toFixed(1) },
+      after: { depth: +s.after.depth.toFixed(1), canyonWidth: +s.after.canyonWidth.toFixed(1), bedWidth: +s.after.bedWidth.toFixed(1) },
       deltaDepth: +s.deltaDepth.toFixed(1),
       deltaCanyonWidth: +s.deltaCanyonWidth.toFixed(1),
     })),
@@ -400,15 +532,80 @@ export async function runMicroDiagnostics(
       ratio: +metrics.bankAsymmetry.ratio.toFixed(2),
     },
   }, null, 2);
+  // Save metrics as a .metrics.json file (using .txt extension to avoid sidecar collision)
   try {
     await fetch('/api/snapshot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: btoa(metricsJson), label: `${label}-metrics`, format: 'json', metadata: { type: 'micro-metrics' } }),
+      body: JSON.stringify({ image: btoa(metricsJson), label: `${label}-metrics`, format: 'metrics.json', metadata: { type: 'micro-metrics', metricsInline: JSON.parse(metricsJson) } }),
     });
-    console.log(`[micro-metrics] persisted: ${label}-metrics.json`);
+    console.log(`[micro-metrics] persisted: ${label}-metrics`);
   } catch (err) {
     console.warn(`[micro-metrics] failed to persist metrics:`, err);
+  }
+
+  // 6. Per-notch metrics (for double-notch and similar multi-system cases)
+  if (notchCenters) {
+    const cs = (extent * 2) / (gridSize - 1);
+    const perNotch: PerNotchMetrics[] = [];
+
+    for (const z of diagZSections) {
+      const gz = Math.max(0, Math.min(gridSize - 1, Math.round((z + extent) / cs)));
+      const halfBand = Math.round(15 / cs); // ±15 world units around each notch center
+
+      // Left notch
+      const lgx = Math.round((notchCenters.leftX + extent) / cs);
+      let lMin = Infinity, lMax = -Infinity;
+      for (let gx = Math.max(0, lgx - halfBand); gx <= Math.min(gridSize - 1, lgx + halfBand); gx++) {
+        const h = finalGrid[gz * gridSize + gx];
+        if (h < lMin) lMin = h;
+        if (h > lMax) lMax = h;
+      }
+
+      // Right notch
+      const rgx = Math.round((notchCenters.rightX + extent) / cs);
+      let rMin = Infinity, rMax = -Infinity;
+      for (let gx = Math.max(0, rgx - halfBand); gx <= Math.min(gridSize - 1, rgx + halfBand); gx++) {
+        const h = finalGrid[gz * gridSize + gx];
+        if (h < rMin) rMin = h;
+        if (h > rMax) rMax = h;
+      }
+
+      // Divide
+      const dgx = Math.round((notchCenters.divideX + extent) / cs);
+      const divideH = finalGrid[gz * gridSize + dgx];
+
+      perNotch.push({
+        z,
+        left: { depth: lMax - lMin, bed: lMin },
+        right: { depth: rMax - rMin, bed: rMin },
+        divideH,
+        divideAboveLeft: divideH - lMin,
+        divideAboveRight: divideH - rMin,
+      });
+
+      console.log(`  [per-notch z=${z}] L depth=${(lMax - lMin).toFixed(1)} R depth=${(rMax - rMin).toFixed(1)} divide=${divideH.toFixed(1)} divAboveL=${(divideH - lMin).toFixed(1)} divAboveR=${(divideH - rMin).toFixed(1)}`);
+    }
+
+    // Persist per-notch metrics
+    try {
+      const perNotchJson = JSON.stringify({ label, notchCenters, perNotch: perNotch.map(p => ({
+        z: p.z,
+        left: { depth: +p.left.depth.toFixed(1), bed: +p.left.bed.toFixed(1) },
+        right: { depth: +p.right.depth.toFixed(1), bed: +p.right.bed.toFixed(1) },
+        divideH: +p.divideH.toFixed(1),
+        divideAboveLeft: +p.divideAboveLeft.toFixed(1),
+        divideAboveRight: +p.divideAboveRight.toFixed(1),
+      })) }, null, 2);
+      await fetch('/api/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: btoa(perNotchJson), label: `${label}-per-notch`, format: 'metrics.json', metadata: { type: 'per-notch-metrics', metricsInline: JSON.parse(perNotchJson) } }),
+      });
+      console.log(`[micro-metrics] persisted: ${label}-per-notch`);
+    } catch (err) {
+      console.warn(`[micro-metrics] per-notch persist failed:`, err);
+    }
   }
 
   return metrics;

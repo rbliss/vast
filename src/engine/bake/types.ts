@@ -50,4 +50,6 @@ export interface TerrainBakeArtifacts {
   depositionMap: Float32Array;
   /** Metadata about the bake */
   metadata: TerrainBakeMetadata;
+  /** H2.5d: Last-iteration headwater provenance field (optional diagnostic) */
+  provenance?: Float32Array;
 }

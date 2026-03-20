@@ -122,10 +122,9 @@ export function executeBake(
   onStageCapture?.('after-stream-power', new Float32Array(grid));
 
   // ── Stage 2b: Channel geometry shaping (resistance-aware) ──
-  if (spResult) {
+  if (spResult && erosion.channelGeometry?.enabled !== false) {
     const postChannelResistance = resistanceGen(grid);
     const tChan0 = performance.now();
-    // Merge channel geometry overrides from erosion config
     const channelGeoParams = erosion.channelGeometry
       ? { ...DEFAULT_CHANNEL_PARAMS, ...erosion.channelGeometry }
       : undefined;
@@ -136,11 +135,9 @@ export function executeBake(
   onStageCapture?.('after-channel-geometry', new Float32Array(grid));
 
   // ── Stage 2c: Hillslope transport / mass wasting (resistance-aware) ──
-  {
-    // Recompute resistance after erosion changed heights
+  if (erosion.hillslope?.enabled !== false) {
     const postErosionResistance = generateResistanceGrid(grid, n, n, extent, cellSize);
     const tHill0 = performance.now();
-    // Merge hillslope overrides from erosion config
     const hillslopeParams = erosion.hillslope
       ? { ...DEFAULT_HILLSLOPE_PARAMS, ...erosion.hillslope }
       : undefined;
@@ -225,5 +222,6 @@ export function executeBake(
     heightGrid: grid,
     depositionMap: depositionAccum,
     metadata,
+    provenance: spResult?.provenance,
   };
 }
