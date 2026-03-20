@@ -440,6 +440,9 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
         benchHF = createReferenceBenchmarkHeightfield();
       }
 
+      // Save original grid before prepass modifies it (for diagnostic comparison)
+      const originalGrid = new Float32Array(benchHF.grid);
+
       // Run analytical prepass before full bake
       const { DEFAULT_ANALYTICAL_PREPASS } = await import('./engine/terrain/analytical/types');
       const { runAnalyticalPrepass } = await import('./engine/terrain/analytical/coarsePrepass');
@@ -506,12 +509,12 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
         const { runMicroDiagnostics } = await import('./engine/terrain/microDiagnostics');
         const { getMicroBenchmark: getMB2 } = await import('./engine/terrain/microBenchmarks');
         const microInfo = getMB2(mn);
-        const initialGrid = benchHF.grid;
+        const initialGrid = originalGrid;
         const finalGrid = artifacts.heightGrid;
         shell.statusText = 'Running micro diagnostics...';
         const metrics = await runMicroDiagnostics(
           initialGrid, stageGrids, finalGrid,
-          benchHF.gridSize, benchHF.extent, `${mn}-h25d`,
+          benchHF.gridSize, benchHF.extent, `${mn}-h25e`,
           microInfo?.diagnosticZSections,
           microInfo?.detrendedMetrics,
           artifacts.provenance,  // actual propagated provenance from stream-power
@@ -519,6 +522,27 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
         );
         (window as any).__microMetrics = metrics;
         (window as any).__microStageGrids = stageGrids;
+
+        // H2.5e: Piedmont-specific diagnostics
+        if (mn === 'piedmont') {
+          const { computePiedmontMetrics, centerlineOverlayImage } = await import('./engine/terrain/piedmontDiagnostics');
+          const { uploadDiagnostic } = await import('./engine/terrain/microDiagnostics');
+          const piedMetrics = computePiedmontMetrics(initialGrid, finalGrid, benchHF.gridSize, benchHF.extent);
+          (window as any).__piedmontMetrics = piedMetrics;
+          console.log(`[piedmont] sinuosity: ${piedMetrics.sinuosityBefore.toFixed(3)} → ${piedMetrics.sinuosityAfter.toFixed(3)} (${piedMetrics.sinuosityChange.toFixed(1)}%)`);
+          for (const m of piedMetrics.migrations) {
+            console.log(`  z=${m.z}: centerline ${m.beforeX.toFixed(1)} → ${m.afterX.toFixed(1)} (migration=${m.migration.toFixed(1)})`);
+          }
+          for (const b of piedMetrics.bankErosion) {
+            console.log(`  bend z=${b.z.toFixed(0)}: outer=${b.outerErosion.toFixed(2)} inner=${b.innerErosion.toFixed(2)} ratio=${b.ratio.toFixed(2)}`);
+          }
+          // Upload centerline overlay + metrics
+          const overlay = centerlineOverlayImage(initialGrid, finalGrid, benchHF.gridSize, benchHF.extent);
+          await uploadDiagnostic(overlay, `${mn}-h25e-centerline-overlay`);
+          const piedJson = JSON.stringify(piedMetrics, null, 2);
+          await uploadDiagnostic(btoa(piedJson), `${mn}-h25e-piedmont-metrics`, 'metrics.json');
+          console.log('[piedmont] diagnostics uploaded');
+        }
       }
 
       runtimeStore.setDomain(newDomain);

@@ -548,6 +548,13 @@ export function streamPowerErosion(
   let lastReceiver: Int32Array = new Int32Array(n);
   let lastSlopes: Float32Array = new Float32Array(n);
 
+  // H2.5e.8: Persistent reference + current centerline state for equilibrium migration
+  let refCL: Float64Array | null = null;   // frozen reference centerline (from initial terrain)
+  let refCurv: Float64Array | null = null; // reference curvature
+  let refOuter: Int8Array | null = null;   // reference outer-bank side
+  let refApex: Float64Array | null = null; // reference apex weighting
+  let curCL: Float64Array | null = null;   // current observed centerline (updated periodically)
+
   // H2.4a: Persistent proto-channel susceptibility field
   // Accumulates across iterations from multiscale convergence signals + headward support.
   // Used to modulate channel-initiation threshold — NOT direct carving.
@@ -598,21 +605,28 @@ export function streamPowerErosion(
     }
 
     // H2.5d: Compute headwater provenance for divide preservation.
-    // Seed: left-side cells get provenance=1, right-side get 0, smooth transition at x=0.
-    // Propagated downstream: balanced provenance (≈0.5) = interfluve divide zone.
-    const provSeed = new Float32Array(n);
-    for (let z2 = 0; z2 < h; z2++) {
-      for (let x2 = 0; x2 < w; x2++) {
-        const wx = -w / 2 + x2; // approximate world x in grid coords
-        provSeed[z2 * w + x2] = Math.max(0, Math.min(1, 0.5 - wx / (w * 0.3)));
+    // Gated by divideProtection config flag — skip when disabled for perf.
+    const divideEnabled = lateralParams?.divideProtection ?? false;
+    let provenance: Float32Array;
+    const dividePenalty = new Float32Array(n); // zeros if disabled
+    if (divideEnabled) {
+      // Seed: left-side cells get provenance=1, right-side get 0, smooth transition at x=0.
+      // Propagated downstream: balanced provenance (≈0.5) = interfluve divide zone.
+      const provSeed = new Float32Array(n);
+      for (let z2 = 0; z2 < h; z2++) {
+        for (let x2 = 0; x2 < w; x2++) {
+          const wx = -w / 2 + x2; // approximate world x in grid coords
+          provSeed[z2 * w + x2] = Math.max(0, Math.min(1, 0.5 - wx / (w * 0.3)));
+        }
       }
-    }
-    const provenance = propagateProvenance(provSeed, area, sorted, recv1, recv2, frac1, n);
-    // dividePenalty: 1.0 where both systems contribute equally (provenance ≈ 0.5)
-    const dividePenalty = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      dividePenalty[i] = 1.0 - 2.0 * Math.abs(provenance[i] - 0.5);
-      if (dividePenalty[i] < 0) dividePenalty[i] = 0;
+      provenance = propagateProvenance(provSeed, area, sorted, recv1, recv2, frac1, n);
+      // dividePenalty: 1.0 where both systems contribute equally (provenance ≈ 0.5)
+      for (let i = 0; i < n; i++) {
+        dividePenalty[i] = 1.0 - 2.0 * Math.abs(provenance[i] - 0.5);
+        if (dividePenalty[i] < 0) dividePenalty[i] = 0;
+      }
+    } else {
+      provenance = new Float32Array(n);
     }
 
     lastArea = area as Float32Array;
@@ -748,6 +762,217 @@ export function streamPowerErosion(
       }
     }
 
+    // H2.5e.8: Equilibrium-offset migration controller
+    const hasMigrationEarly = (lateralParams?.maxMigrationSlope ?? 999) < 100;
+    const signedCurvField = new Float32Array(n);
+    const curvOuterSide = new Int8Array(n);
+    const trunkTangentX = new Float32Array(n);
+    const trunkTangentZ = new Float32Array(n);
+    const smoothArea = new Float32Array(n);
+    for (let i = 0; i < n; i++) smoothArea[i] = area[i];
+    // Per-cell residual-driven migration gain (0 = at target, 1 = far from target)
+    const migrationGain = new Float32Array(n);
+
+    // Trunk tangents + smoothed area (for lateral pass)
+    {
+      const lp = lateralParams ?? DEFAULT_LATERAL;
+      const minCA = lp.minChannelArea;
+      for (let z2 = 1; z2 < h - 1; z2++) {
+        for (let x2 = 1; x2 < w - 1; x2++) {
+          const i = z2 * w + x2;
+          if (area[i] < minCA) continue;
+          let tdx = 0, tdz = 0, cur = i;
+          let areaSum = area[i], areaCount = 1;
+          for (let step = 0; step < 3; step++) {
+            const r = receiver[cur];
+            if (r < 0 || r === cur) break;
+            tdx += (r % w) - (cur % w); tdz += Math.floor(r / w) - Math.floor(cur / w);
+            cur = r; areaSum += area[r]; areaCount++;
+          }
+          const tlen = Math.sqrt(tdx * tdx + tdz * tdz);
+          if (tlen > 0.001) { trunkTangentX[i] = tdx / tlen; trunkTangentZ[i] = tdz / tlen; }
+          else {
+            const dx2 = (grid[i + 1] - grid[i - 1]) / (2 * cellSize);
+            const dz2 = (grid[i + w] - grid[i - w]) / (2 * cellSize);
+            const gl = Math.sqrt(dx2 * dx2 + dz2 * dz2);
+            if (gl > 0.001) { trunkTangentX[i] = -dx2 / gl; trunkTangentZ[i] = -dz2 / gl; }
+          }
+          smoothArea[i] = areaSum / areaCount;
+        }
+      }
+    }
+
+    if (hasMigrationEarly) {
+      // Initialize reference centerline ONCE from initial terrain
+      if (!refCL) {
+        refCL = new Float64Array(h);
+        refCurv = new Float64Array(h);
+        refOuter = new Int8Array(h);
+        refApex = new Float64Array(h);
+
+        // Extract thalweg from initial grid
+        const midRow = Math.floor(h / 2);
+        let seedGx = Math.floor(w / 2), seedMinH = Infinity;
+        for (let gx = Math.max(0, seedGx - 20); gx <= Math.min(w - 1, seedGx + 20); gx++) {
+          if (grid[midRow * w + gx] < seedMinH) { seedMinH = grid[midRow * w + gx]; seedGx = gx; }
+        }
+        refCL[midRow] = seedGx;
+        for (const dir of [1, -1]) {
+          let pg = seedGx;
+          for (let gz = midRow + dir; dir === 1 ? gz < h - 3 : gz >= 3; gz += dir) {
+            let bg = pg, bh = Infinity;
+            for (let gx = Math.max(0, Math.round(pg) - 8); gx <= Math.min(w - 1, Math.round(pg) + 8); gx++) {
+              if (grid[gz * w + gx] < bh) { bh = grid[gz * w + gx]; bg = gx; }
+            }
+            refCL[gz] = bg; pg = bg;
+          }
+        }
+        // Smooth reference
+        for (let pass = 0; pass < 3; pass++) {
+          const tmp = new Float64Array(refCL);
+          for (let gz = 6; gz < h - 6; gz++) {
+            let sum = 0; for (let j = gz - 5; j <= gz + 5; j++) sum += tmp[j];
+            refCL[gz] = sum / 11;
+          }
+        }
+        // Compute reference curvature + outer side
+        for (let gz = 5; gz < h - 5; gz++) {
+          const tx = refCL[gz + 3] - refCL[gz - 3];
+          const tz = 6.0;
+          const tlen = Math.sqrt(tx * tx + tz * tz);
+          const d2x = refCL[gz + 3] - 2 * refCL[gz] + refCL[gz - 3];
+          refCurv[gz] = d2x / (tlen * tlen) * 6;
+          refOuter[gz] = refCurv[gz] > 0 ? 1 : -1;
+        }
+        // Apex weighting from reference curvature (non-max suppression)
+        const absCurv = new Float64Array(h);
+        for (let gz = 5; gz < h - 5; gz++) absCurv[gz] = Math.abs(refCurv[gz]);
+        for (let gz = 10; gz < h - 10; gz++) {
+          let isMax = true;
+          for (let j = gz - 7; j <= gz + 7; j++) {
+            if (j !== gz && absCurv[j] > absCurv[gz]) { isMax = false; break; }
+          }
+          if (isMax && absCurv[gz] > 0.002) {
+            for (let j = Math.max(5, gz - 12); j <= Math.min(h - 6, gz + 12); j++) {
+              const d = Math.abs(j - gz);
+              const wt = Math.exp(-d * d / (2 * 8 * 8));
+              if (wt > refApex[j]) refApex[j] = wt;
+            }
+          }
+        }
+        // Initialize current centerline tracker
+        curCL = new Float64Array(refCL);
+      }
+
+      // Update current centerline every 2 iterations for responsive damping
+      if (curCL && iter % 2 === 0) {
+        const midRow = Math.floor(h / 2);
+        // Seed from actual lowest point in wide band around grid center
+        let seedGx = Math.floor(w / 2), seedMinH = Infinity;
+        for (let gx = Math.max(0, seedGx - 40); gx <= Math.min(w - 1, seedGx + 40); gx++) {
+          if (grid[midRow * w + gx] < seedMinH) { seedMinH = grid[midRow * w + gx]; seedGx = gx; }
+        }
+        curCL[midRow] = seedGx;
+        let pg = seedGx;
+        for (const dir of [1, -1]) {
+          let prevg = pg;
+          for (let gz = midRow + dir; dir === 1 ? gz < h - 3 : gz >= 3; gz += dir) {
+            let bg = prevg, bh = Infinity;
+            // Very wide search to track migrated channel
+            for (let gx = Math.max(0, Math.round(prevg) - 40); gx <= Math.min(w - 1, Math.round(prevg) + 40); gx++) {
+              if (grid[gz * w + gx] < bh) { bh = grid[gz * w + gx]; bg = gx; }
+            }
+            curCL[gz] = bg; prevg = bg;
+          }
+        }
+        // Smooth current
+        for (let pass = 0; pass < 2; pass++) {
+          const tmp = new Float64Array(curCL);
+          for (let gz = 6; gz < h - 6; gz++) {
+            let sum = 0; for (let j = gz - 4; j <= gz + 4; j++) sum += tmp[j];
+            curCL[gz] = sum / 9;
+          }
+        }
+      }
+
+      // Compute residual-driven migration gain per row, rasterize to cells
+      const maxOffsetCells = 2.8; // target: ~4.4 world units at cellSize 1.57
+      const kCurv = 40.0; // curvature-to-offset scaling
+      const corridorRadius = 5;
+      const minCA = (lateralParams ?? DEFAULT_LATERAL).minChannelArea;
+
+      for (let gz = 5; gz < h - 5; gz++) {
+        const apex = refApex![gz];
+        if (apex < 0.05) continue;
+        const outer = refOuter![gz];
+        if (outer === 0) continue;
+
+        // Target offset from reference curve
+        const targetOffset = Math.min(maxOffsetCells,
+          kCurv * Math.pow(Math.abs(refCurv![gz]), 0.8) * apex);
+        if (targetOffset < 0.1) continue;
+
+        // Absolute displacement from reference (regardless of direction)
+        const absOffset = curCL ? Math.abs(curCL[gz] - refCL[gz]) : 0;
+
+        // Residual: how much more offset is allowed?
+        const residual = Math.max(0, targetOffset - absOffset);
+        const gain = residual / Math.max(targetOffset, 0.01);
+
+        // Debug: log controller state at z≈128 (mid-grid) every 20 iterations
+        if (iter % 20 === 0 && gz === Math.floor(h / 2)) {
+          console.log(`[mig-ctrl] iter=${iter} gz=${gz} refCL=${refCL[gz].toFixed(1)} curCL=${curCL?.[gz]?.toFixed(1)} absOff=${absOffset.toFixed(1)} target=${targetOffset.toFixed(2)} residual=${residual.toFixed(2)} gain=${gain.toFixed(3)}`);
+        }
+
+        // Compute tangent/normal from reference curve
+        const tx = refCL[Math.min(h - 1, gz + 3)] - refCL[Math.max(0, gz - 3)];
+        const tz = 6.0;
+        const tlen = Math.sqrt(tx * tx + tz * tz);
+        const tanX = tx / tlen, tanZ = tz / tlen;
+
+        // Rasterize to corridor cells
+        const clx = curCL ? curCL[gz] : refCL[gz];
+        for (let gx = Math.max(3, Math.round(clx) - corridorRadius); gx <= Math.min(w - 4, Math.round(clx) + corridorRadius); gx++) {
+          const idx2 = gz * w + gx;
+          if (smoothArea[idx2] < minCA * 0.3) continue;
+          signedCurvField[idx2] = refCurv![gz] * apex;
+          curvOuterSide[idx2] = outer;
+          migrationGain[idx2] = gain;
+          trunkTangentX[idx2] = tanX;
+          trunkTangentZ[idx2] = tanZ;
+        }
+      }
+    }
+
+    // H2.5e.9: Precompute per-row corridor-level overshoot damping
+    const rowDampK = hasMigrationEarly && refCL && curCL && refApex && refCurv
+      ? new Float32Array(h)
+      : null;
+    if (rowDampK && refCL && curCL && refApex && refCurv) {
+      const maxOffCells = 2.0; // ~3.1 world units max
+      const kCurv9 = 8.0; // low scaling — tight control
+      rowDampK.fill(1.0); // default: no damping
+
+      for (let gz = 5; gz < h - 5; gz++) {
+        // Apply damping everywhere along the corridor, not just apex zones
+        // Use curvature for target offset scaling, but ensure a minimum target
+        const apex = Math.max(0.1, refApex[gz]); // minimum 0.1 so all rows get some target
+        const targetOff = Math.max(1.5, Math.min(maxOffCells, kCurv9 * Math.pow(Math.abs(refCurv[gz]), 0.8) * apex));
+        const clOvershoot = Math.max(0, Math.abs(curCL[gz] - refCL[gz]) - targetOff);
+
+        if (clOvershoot > 0) {
+          // Smoothstep: ramp from 1.0 to 0.1 over 3 cells of overshoot
+          const t9 = Math.min(1, clOvershoot / 3.0);
+          const ss = t9 * t9 * (3 - 2 * t9);
+          rowDampK[gz] = 1.0 - ss * 0.9; // reduces to 0.1 at full overshoot
+        }
+      }
+    }
+
+    // H2.5e.4: Buffered incision + point bar deposits
+    const incisionBuf = new Float32Array(n);
+    const pointBarBuf = new Float32Array(n);
+
     // Step 3: Stream-power incision + sediment production
     if (sedimentFlux) sedimentFlux.fill(0);
 
@@ -855,20 +1080,104 @@ export function streamPowerErosion(
         // H2.5d: Reduce erosion intensity at divide cells
         const divideProtection = Math.max(0.15, 1.0 - divPen * 0.85);
 
-        let erosion = effectiveK * R * mesaProtection * headwardBoost * aeBoost * divideProtection *
+        // H2.5e.9: Row/corridor-level overshoot damping (precomputed)
+        // rowDampK/rowDampThresh are per-row values computed before the incision loop.
+        // Applied with cross-corridor asymmetry: outer half damped more, inner less.
+        let piedmontDamping = 1.0;
+        if (hasMigrationEarly && rowDampK) {
+          const rowDamp = rowDampK[z];
+          if (rowDamp < 1.0 && curCL) {
+            // Cross-corridor position: which side of the current thalweg is this cell?
+            const clx = curCL[z];
+            const outer9 = refOuter ? refOuter[z] : 0;
+            const crossPos = (x - clx) * outer9; // positive = outer side
+            if (crossPos > 0) {
+              // Outer half: full damping
+              piedmontDamping = rowDamp;
+            } else if (crossPos > -3) {
+              // Center/near-inner: moderate damping
+              piedmontDamping = rowDamp + (1.0 - rowDamp) * 0.4;
+            }
+            // Inner side (crossPos < -3): no damping — let inner bank erode normally
+          }
+        }
+
+        const dampedK = effectiveK * piedmontDamping;
+
+        let erosion = dampedK * R * mesaProtection * headwardBoost * aeBoost * divideProtection *
           Math.pow(A, effectiveAreaExp) * Math.pow(S, effectiveSlopeExp);
         erosion = Math.min(erosion, maxErosion);
         const eroded = dt * erosion;
-        grid[idx] -= eroded;
 
-        // Produce transportable sediment
-        if (sedimentFlux) {
-          sedimentFlux[idx] += eroded * sedimentFraction;
+        // H2.5e.9: Explicit incision redistribution disabled — natural migration only
+        const piedOuter = curvOuterSide[idx];
+        const piedMigInt = 0; // forced off
+        if (false) { // eslint-disable-line
+          // H2.5e.8: Conservative residual-controlled incision kernel
+          const m = piedMigInt * 0.35; // max 35% redistribution at full residual
+          const outer1Share = 0.30 * m;
+          const outer2Share = 0.05 * m;
+          const centerShare = 1.0 - outer1Share - outer2Share;
+
+          const opx = -trunkTangentZ[idx];
+          const opz = trunkTangentX[idx];
+
+          // Center (reduced incision)
+          incisionBuf[idx] += eroded * centerShare;
+
+          // Outer bank cells (shifted incision)
+          const o1x = Math.round(x + opx * piedOuter);
+          const o1z = Math.round(z + opz * piedOuter);
+          if (o1x >= 1 && o1x < w - 1 && o1z >= 1 && o1z < h - 1) {
+            incisionBuf[o1z * w + o1x] += eroded * outer1Share;
+          } else {
+            incisionBuf[idx] += eroded * outer1Share; // fallback to center
+          }
+          const o2x = Math.round(x + opx * piedOuter * 2);
+          const o2z = Math.round(z + opz * piedOuter * 2);
+          if (o2x >= 1 && o2x < w - 1 && o2z >= 1 && o2z < h - 1) {
+            incisionBuf[o2z * w + o2x] += eroded * outer2Share;
+          } else {
+            incisionBuf[idx] += eroded * outer2Share; // fallback to center
+          }
+
+          // Separate point bar deposition (not from incision budget)
+          const pointBarAmount = eroded * 0.08 * m;
+          const i1x = Math.round(x - opx * piedOuter);
+          const i1z = Math.round(z - opz * piedOuter);
+          if (i1x >= 1 && i1x < w - 1 && i1z >= 1 && i1z < h - 1) {
+            pointBarBuf[i1z * w + i1x] += pointBarAmount;
+          }
+        } else {
+          // Normal case: all incision at center
+          incisionBuf[idx] += eroded;
+        }
+
+        // Produce transportable sediment (source follows incision placement)
+        // For piedmont migration, sediment comes from the outer bank, not center
+        if (sedimentFlux && eroded > 0) {
+          if (piedMigInt > 0.05 && piedOuter !== 0 && hasMigrationEarly) {
+            // Distribute sediment to where incision actually happened
+            const o1x2 = Math.round(x + (-trunkTangentZ[idx]) * piedOuter);
+            const o1z2 = Math.round(z + trunkTangentX[idx] * piedOuter);
+            if (o1x2 >= 1 && o1x2 < w - 1 && o1z2 >= 1 && o1z2 < h - 1) {
+              sedimentFlux[o1z2 * w + o1x2] += eroded * sedimentFraction * piedMigInt;
+            }
+            sedimentFlux[idx] += eroded * sedimentFraction * (1 - piedMigInt);
+          } else {
+            sedimentFlux[idx] += eroded * sedimentFraction;
+          }
         }
 
         // Uplift (optional, maintains relief)
         grid[idx] += upliftRate;
       }
+    }
+
+    // H2.5e.4: Apply buffered incision + point bar deposits
+    for (let i = 0; i < n; i++) {
+      if (incisionBuf[i] > 0) grid[i] -= incisionBuf[i];
+      if (pointBarBuf[i] > 0) grid[i] += pointBarBuf[i];
     }
 
     // Step 3b: Lateral erosion / canyon widening (H2.5c — split trunk + rim drivers)
@@ -882,6 +1191,7 @@ export function streamPowerErosion(
       const minChannelArea = lp.minChannelArea;
       const baseReach = lp.maxReach;
       const lateralBuf = new Float32Array(n);
+      const migrationDepositBuf = new Float32Array(n); // H2.5e.2: deferred inner-bank deposits
 
       const trunkReachBonus = 6;
       const rimReachBonus = 4;
@@ -893,47 +1203,8 @@ export function streamPowerErosion(
         if (area[i] > maxArea) maxArea = area[i];
       }
 
-      // Precompute smoothed trunk tangent directions from receiver chain.
-      const trunkTangentX = new Float32Array(n);
-      const trunkTangentZ = new Float32Array(n);
-      const smoothArea = new Float32Array(n);
-      for (let i = 0; i < n; i++) smoothArea[i] = area[i];
-
-      for (let z2 = 1; z2 < h - 1; z2++) {
-        for (let x2 = 1; x2 < w - 1; x2++) {
-          const i = z2 * w + x2;
-          if (area[i] < minChannelArea) continue;
-
-          let tdx = 0, tdz = 0;
-          let cur = i;
-          let areaSum = area[i], areaCount = 1;
-          for (let step = 0; step < 3; step++) {
-            const r = receiver[cur];
-            if (r < 0 || r === cur) break;
-            const rx = r % w, rz = (r - rx) / w;
-            const cx = cur % w, cz = (cur - cx) / w;
-            tdx += rx - cx;
-            tdz += rz - cz;
-            cur = r;
-            areaSum += area[r];
-            areaCount++;
-          }
-          const tlen = Math.sqrt(tdx * tdx + tdz * tdz);
-          if (tlen > 0.001) {
-            trunkTangentX[i] = tdx / tlen;
-            trunkTangentZ[i] = tdz / tlen;
-          } else {
-            const dhdx2 = (grid[i + 1] - grid[i - 1]) / (2 * cellSize);
-            const dhdz2 = (grid[i + w] - grid[i - w]) / (2 * cellSize);
-            const gl = Math.sqrt(dhdx2 * dhdx2 + dhdz2 * dhdz2);
-            if (gl > 0.001) {
-              trunkTangentX[i] = -dhdx2 / gl;
-              trunkTangentZ[i] = -dhdz2 / gl;
-            }
-          }
-          smoothArea[i] = areaSum / areaCount;
-        }
-      }
+      // (Trunk tangent, smoothed area, curvature precomputed above in H2.5e.4 block)
+      const hasMigration = hasMigrationEarly;
 
       for (let z = 3; z < h - 3; z++) {
         for (let x = 3; x < w - 3; x++) {
@@ -943,11 +1214,10 @@ export function streamPowerErosion(
 
           const hHere = grid[idx];
 
-          // H2.5c: Use precomputed trunk tangent for bank normal direction
+          // Use precomputed trunk tangent for bank normal direction
           const fdx = trunkTangentX[idx];
           const fdz = trunkTangentZ[idx];
           if (fdx === 0 && fdz === 0) continue;
-          // Bank normal = perpendicular to trunk tangent
           const px = -fdz;
           const pz = fdx;
 
@@ -958,12 +1228,10 @@ export function streamPowerErosion(
             channelPower *= 1.0 + guide * 0.8;
           }
 
-          // ── Driver 1: trunkFactor (mature channel widening) ──
-          // H2.5d.1: Uses global max area with provenance-based divide penalty.
+          // ── Driver 1: trunkFactor ──
           const trunkAreaThreshold = maxArea * 0.12;
           let trunkFactor = Math.max(0, Math.min(1,
             (A_here - minChannelArea) / Math.max(1, trunkAreaThreshold - minChannelArea)));
-          // H2.5d.1: Suppress widening at interfluve divides (provenance-based)
           const divPenLateral = dividePenalty[idx];
           trunkFactor *= Math.max(0, 1.0 - divPenLateral);
 
@@ -1002,16 +1270,53 @@ export function streamPowerErosion(
             }
           }
 
+          // ── Driver 3: Piedmont planform migration (H2.5e.1) ──
+          // Uses precomputed smoothed signed curvature for cross-channel thalweg migration.
+          const maxMigSlope = lp.maxMigrationSlope ?? 999;
+          const localSlope = slopes[idx];
+          const piedmontFactor = Math.max(0, Math.min(1, (maxMigSlope - localSlope) / Math.max(0.01, maxMigSlope * 0.67)));
+
+          const signedCurvature = signedCurvField[idx];
+          const outerSide = curvOuterSide[idx];
+
+          const curvThresh = lp.curvatureThreshold ?? 0.03;
+          const curvStrength = lp.curvatureStrength ?? 2.2;
+          const outerBoost = lp.outerBankBoost ?? 2.5;
+          const innerProtect = lp.innerBankProtection ?? 0.15;
+          const innerDeposit = lp.innerBankDeposition ?? 0.25;
+          const migReach = lp.migrationReach ?? 6;
+          const curvMag = Math.max(0, Math.abs(signedCurvature) - curvThresh);
+
+          // H2.5e.9: Explicit piedmont forcing disabled — natural migration + overshoot damping only
+          const isPiedmontDominant = false; // disabled for proof
+          const piedCtrl = 0;
+
           // ── Combined widening formula ──
-          const widenFactor = 1.0 + trunkFactor * 1.5 + rimFactor * 1.0;
+          // In piedmont mode: suppress generic widening, all migration through controller
+          const symmetricSuppression = isPiedmontDominant ? 0.0 : 1.0;
+          const widenFactor = 1.0 + trunkFactor * 1.5 * symmetricSuppression + rimFactor * 1.0;
           const localLateralRate = lateralRate * widenFactor;
-          const localMaxReach = Math.round(baseReach + trunkFactor * trunkReachBonus + rimFactor * rimReachBonus);
+          const localMaxReach = Math.round(baseReach + trunkFactor * trunkReachBonus * symmetricSuppression + rimFactor * rimReachBonus);
           const localBankThreshold = bankSlopeThreshold * Math.max(0.4, 1.0 - trunkFactor * 0.2 - rimFactor * 0.15);
 
           // Check both bank sides, multiple cells outward
           for (const side of [-1, 1]) {
+            // H2.5e.8.1: Piedmont bank asymmetry gated by controller residual
+            const isOuterBank = (side === outerSide) && piedCtrl > 0.02;
+            const isInnerBank = (side === -outerSide) && piedCtrl > 0.02;
+
+            let sideRate = localLateralRate;
+            let sideReach = localMaxReach;
+            if (isOuterBank) {
+              sideRate *= 1.0 + piedCtrl * ((lp.outerBankBoost ?? 2.5) - 1.0);
+              sideReach = Math.max(sideReach, lp.migrationReach ?? 6);
+            }
+            if (isInnerBank) {
+              sideRate *= Math.max(0.05, (lp.innerBankProtection ?? 0.15) * (1.0 - piedCtrl));
+            }
+
             let prevH = hHere;
-            for (let reach = 1; reach <= localMaxReach; reach++) {
+            for (let reach = 1; reach <= sideReach; reach++) {
               const bx = Math.round(x + px * side * reach);
               const bz = Math.round(z + pz * side * reach);
               if (bx < 1 || bx >= w - 1 || bz < 1 || bz >= h - 1) break;
@@ -1029,7 +1334,7 @@ export function streamPowerErosion(
               const slopeExcess = bankSlope - localBankThreshold;
 
               const lateralErosion = Math.min(
-                slopeExcess * localLateralRate * channelPower * R_bank * reachDecay * reliefFactor * cellSize,
+                slopeExcess * sideRate * channelPower * R_bank * reachDecay * reliefFactor * cellSize,
                 totalRelief * 0.35,
               );
 
@@ -1042,15 +1347,16 @@ export function streamPowerErosion(
 
               prevH = bankH;
             }
+
+            // (Legacy direct deposition removed in H2.5e.3 — now handled by migrationDepositBuf)
           }
         }
       }
 
-      // Apply lateral erosion
+      // Apply lateral erosion + migration deposits
       for (let i = 0; i < n; i++) {
-        if (lateralBuf[i] > 0) {
-          grid[i] -= lateralBuf[i];
-        }
+        if (lateralBuf[i] > 0) grid[i] -= lateralBuf[i];
+        if (migrationDepositBuf[i] > 0) grid[i] += migrationDepositBuf[i];
       }
     }
 

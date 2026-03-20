@@ -190,6 +190,7 @@ function doubleNotch(): MicroBenchmark {
         lateralRate: 0.75,
         maxReach: 9,
         minChannelArea: 12,
+        divideProtection: true,
       },
     },
   };
@@ -295,7 +296,7 @@ function trunkWiden(): MicroBenchmark {
   };
 }
 
-/** 5. Low-slope piedmont — future sinuosity test */
+/** 5. Low-slope piedmont with S-shaped trunk — planform migration test */
 function piedmont(): MicroBenchmark {
   const hf = new EditableHeightfield(GRID, EXTENT);
   const cs = (EXTENT * 2) / (GRID - 1);
@@ -305,9 +306,17 @@ function piedmont(): MicroBenchmark {
       const wx = -EXTENT + gx * cs;
       const wz = -EXTENT + gz * cs;
 
-      // Very gentle slope with slight sinusoidal cross-slope variation
-      let h = 15 - wz * 0.04; // gentle downslope toward +z
-      h += Math.sin(wx * 0.03) * 2; // gentle cross-slope undulation
+      // H2.5e: Low-slope floodplain with pre-cut S-shaped trunk
+      let h = 18 - wz * 0.025; // gentle downslope toward +z
+      h += 0.8 * Math.sin(wx * 0.015 + wz * 0.01); // broad low-amplitude undulation
+
+      // Pre-carved S-shaped trunk centerline
+      const centerX = 22 * Math.sin((wz + 30) * 0.018) - 0.08 * wz;
+      const d = Math.abs(wx - centerX);
+
+      // Floodplain corridor (~18 units wide) + shallow thalweg (~7 units)
+      if (d < 18) h -= 2.0 * (1 - d / 18) * (1 - d / 18);
+      if (d < 7) h -= 2.5 * (1 - d / 7);
 
       hf.grid[gz * GRID + gx] = Math.max(1, h);
     }
@@ -315,9 +324,49 @@ function piedmont(): MicroBenchmark {
 
   return {
     name: 'piedmont',
-    description: 'Low-slope terrain — future sinuosity / lateral migration test',
+    description: 'Low-slope floodplain with S-trunk — planform migration test',
     heightfield: hf,
-    camera: { camX: 100, camZ: -100, clearance: 60, tgtX: 0, tgtZ: 0, tgtClearance: 8 },
+    camera: { camX: 0, camZ: -120, clearance: 100, tgtX: 0, tgtZ: 0, tgtClearance: 8 },
+    diagnosticZSections: [-120, -40, 40, 120],
+    detrendedMetrics: true,
+    // H2.5e T1: lateral-only proof for piedmont migration
+    erosionOverrides: {
+      streamPower: {
+        enabled: true,
+        iterations: 100,
+        erosionK: 0.0035,
+        areaExponent: 0.45,
+        slopeExponent: 0.95,
+        dt: 1.0,
+        diffusionRate: 0.0001,
+        minSlope: 0.001,
+        upliftRate: 0.0,
+        maxErosion: 0.8,
+        depositionEnabled: false, // H2.5e.5: clean migration proof — only point bar deposition
+        sedimentFraction: 0.6,
+        transportK: 0.003,
+        transportAreaExp: 0.4,
+        transportSlopeExp: 1.1,
+      },
+      channelGeometry: { enabled: false },
+      hillslope: { enabled: false },
+      lateral: {
+        bankSlopeThreshold: 0.08,
+        lateralRate: 0.28,
+        maxReach: 7,
+        minChannelArea: 6,
+        // H2.5e: Piedmont migration params
+        maxMigrationSlope: 0.12,
+        curvatureThreshold: 0.03,
+        curvatureStrength: 2.2,
+        outerBankBoost: 2.5,
+        innerBankProtection: 0.15,
+        innerBankDeposition: 0.25,
+        tangentSmoothSteps: 4,
+        curvatureSmoothSteps: 3,
+        migrationReach: 6,
+      },
+    },
   };
 }
 

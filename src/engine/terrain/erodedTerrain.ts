@@ -32,6 +32,18 @@ export interface LateralErosionParams {
   lateralRate: number;
   maxReach: number;
   minChannelArea: number;
+  /** Enable provenance-based divide penalty (default: false) */
+  divideProtection?: boolean;
+  /** H2.5e: Piedmont planform migration params */
+  maxMigrationSlope?: number;
+  curvatureThreshold?: number;
+  curvatureStrength?: number;
+  outerBankBoost?: number;
+  innerBankProtection?: number;
+  innerBankDeposition?: number;
+  tangentSmoothSteps?: number;
+  curvatureSmoothSteps?: number;
+  migrationReach?: number;
 }
 
 export const DEFAULT_LATERAL: LateralErosionParams = {

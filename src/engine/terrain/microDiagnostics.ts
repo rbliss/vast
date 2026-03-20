@@ -400,7 +400,7 @@ export function computeCanyonMetrics(
  * Upload a base64 image to the API server with a label.
  */
 export async function uploadDiagnostic(
-  base64: string, label: string, format: 'png' | 'svg' = 'png',
+  base64: string, label: string, format: string = 'png',
 ): Promise<void> {
   try {
     await fetch('/api/snapshot', {
