@@ -428,12 +428,14 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
 
       // Recreate the same terrain that was loaded at startup (micro or full benchmark)
       let benchHF: import('./engine/terrain/editableHeightfield').EditableHeightfield;
+      let microOverrides: Partial<import('./engine/terrain/erodedTerrain').ErosionConfig> = {};
       const mn = (window as any).__microName;
       if (mn) {
         const { getMicroBenchmark } = await import('./engine/terrain/microBenchmarks');
         const micro = getMicroBenchmark(mn);
         if (!micro) throw new Error(`Unknown micro: ${mn}`);
         benchHF = micro.heightfield;
+        microOverrides = micro.erosionOverrides ?? {};
       } else {
         benchHF = createReferenceBenchmarkHeightfield();
       }
@@ -445,23 +447,33 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
       const rebakePrepassCfg = { ...DEFAULT_ANALYTICAL_PREPASS };
       if ((window as any).__ae3NoPrepass) rebakePrepassCfg.blendStrength = 0;
       const rebakePrepass = runAnalyticalPrepass(benchHF.grid, benchHF.gridSize, benchHF.extent, rebakePrepassCfg);
-
-      // Adjust erosion config for micro cases (different grid size/extent)
       const erosionCfg = {
         ...BENCHMARK_EROSION,
         gridSize: benchHF.gridSize,
         extent: benchHF.extent,
         streamPower: {
           ...BENCHMARK_EROSION.streamPower,
+          ...(microOverrides.streamPower ?? {}),
           iterations,
-          erosionK: opts.erosionStrength ?? BENCHMARK_EROSION.streamPower.erosionK,
+          erosionK: opts.erosionStrength ?? microOverrides.streamPower?.erosionK ?? BENCHMARK_EROSION.streamPower.erosionK,
         },
         // Micro isolation: disable non-essential post-passes for cleaner feature proofing
         ...(mn ? {
           fan: { ...BENCHMARK_EROSION.fan, enabled: false },
           thermal: { ...BENCHMARK_EROSION.thermal, enabled: false },
+          terraces: { enabled: false },
         } : {}),
+        // H2.5a: Pass through micro-specific overrides for channel geometry, hillslope, lateral
+        ...(microOverrides.channelGeometry ? { channelGeometry: microOverrides.channelGeometry } : {}),
+        ...(microOverrides.hillslope ? { hillslope: microOverrides.hillslope } : {}),
+        ...(microOverrides.lateral ? { lateral: microOverrides.lateral } : {}),
       };
+
+      // H2.5a: Stage capture for micro diagnostics
+      const stageGrids: Map<string, Float32Array> = new Map();
+      const stageCapture = mn ? (stage: string, grid: Float32Array) => {
+        stageGrids.set(stage, new Float32Array(grid));
+      } : undefined;
 
       const artifacts = await runBake(
         { macro: MACRO_PRESETS['chain'], erosion: erosionCfg },
@@ -473,7 +485,7 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
           shell.statusText = `Baking: ${stageLabels[progress.stage] ?? progress.stage} (${progress.stageIndex + 1}/${progress.totalStages})`;
         },
         benchHF.grid,
-        undefined, // onStageCapture
+        stageCapture,
         (window as any).__ae3NoGuidance ? undefined : rebakePrepass.guidance.channelStrength, // AE3 guidance
       );
 
@@ -488,6 +500,20 @@ shell.addEventListener('apply-erosion', (async (e: Event) => {
 
       // Re-apply clay mode after terrain swap
       app.setClayMode(true);
+
+      // H2.5a: Run direct grid diagnostics for micro mode
+      if (mn && stageGrids.size > 0) {
+        const { runMicroDiagnostics } = await import('./engine/terrain/microDiagnostics');
+        const initialGrid = benchHF.grid;
+        const finalGrid = artifacts.heightGrid;
+        shell.statusText = 'Running micro diagnostics...';
+        const metrics = await runMicroDiagnostics(
+          initialGrid, stageGrids, finalGrid,
+          benchHF.gridSize, benchHF.extent, `${mn}-h25b`,
+        );
+        (window as any).__h25aMetrics = metrics;
+        (window as any).__h25aStageGrids = stageGrids;
+      }
 
       runtimeStore.setDomain(newDomain);
       shell.statusText = `Bake complete — ${iterations} iterations (${Math.round(artifacts.metadata.computeTimeMs)}ms)`;

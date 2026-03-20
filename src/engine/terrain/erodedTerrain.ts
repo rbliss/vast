@@ -23,6 +23,23 @@ import type { TerrainSource } from './terrainSource';
 import { thermalErosion, hydraulicErosion, type ThermalParams, type HydraulicParams } from './erosion';
 import { streamPowerErosion, type StreamPowerParams, DEFAULT_STREAM_POWER } from './streamPower';
 import { applyFanDeposition, type FanParams, DEFAULT_FAN_PARAMS } from './fanDeposition';
+import type { ChannelGeometryParams } from './channelGeometry';
+import type { HillslopeParams } from './hillslopeTransport';
+
+/** Lateral erosion parameters (exposed from streamPower.ts hardcoded values) */
+export interface LateralErosionParams {
+  bankSlopeThreshold: number;
+  lateralRate: number;
+  maxReach: number;
+  minChannelArea: number;
+}
+
+export const DEFAULT_LATERAL: LateralErosionParams = {
+  bankSlopeThreshold: 0.5,
+  lateralRate: 0.35,
+  maxReach: 4,
+  minChannelArea: 20.0,
+};
 
 export interface ErosionConfig {
   /** Grid resolution (gridSize x gridSize cells) */
@@ -37,6 +54,14 @@ export interface ErosionConfig {
   hydraulic: HydraulicParams & { enabled: boolean };
   /** Fan and debris-flow deposition (runs after stream-power) */
   fan: FanParams & { enabled: boolean };
+  /** Channel geometry shaping (optional override) */
+  channelGeometry?: Partial<ChannelGeometryParams>;
+  /** Hillslope transport (optional override) */
+  hillslope?: Partial<HillslopeParams>;
+  /** Lateral erosion (optional override) */
+  lateral?: Partial<LateralErosionParams>;
+  /** Terrace formation (optional — defaults to enabled) */
+  terraces?: { enabled: boolean };
 }
 
 export const DEFAULT_EROSION: ErosionConfig = {

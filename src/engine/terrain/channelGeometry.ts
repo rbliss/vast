@@ -135,20 +135,24 @@ export function applyChannelGeometry(
 
         // Geomorphic cross-section profile:
         // - Flat alluvial bed zone (width scales with maturity)
-        // - Steep bank break above the bed
+        // - Steep bank break above the bed (steepness controlled by bankSteepness param)
         // - Gradual valley-side slope above banks
+        // bankSteepness: 0 = gentle U-shape, 1 = steep V-shape/cliff banks
+        const bankTransWidth = 0.15 * (1.2 - params.bankSteepness); // steeper = narrower transition
+        const bankPeak = 0.4 + params.bankSteepness * 0.5; // steeper = higher bank wall (0.4-0.9)
+
         let profile: number;
         if (t < bedFraction) {
           // Flat bed zone — nearly no height change
           profile = 0;
-        } else if (t < bedFraction + 0.15) {
+        } else if (t < bedFraction + bankTransWidth) {
           // Bank break — steep transition from bed to valley side
-          const bankT = (t - bedFraction) / 0.15;
-          profile = bankT * bankT * 0.6; // steep bank
+          const bankT = (t - bedFraction) / Math.max(0.01, bankTransWidth);
+          profile = bankT * bankT * bankPeak; // steepness-controlled bank
         } else {
           // Valley side — gradual slope to surrounding terrain
-          const sideT = (t - bedFraction - 0.15) / Math.max(0.01, 1 - bedFraction - 0.15);
-          profile = 0.6 + sideT * 0.4; // gradual rise
+          const sideT = (t - bedFraction - bankTransWidth) / Math.max(0.01, 1 - bedFraction - bankTransWidth);
+          profile = bankPeak + sideT * (1.0 - bankPeak); // gradual rise to full height
         }
 
         const carveAmount = depth * (1 - profile);

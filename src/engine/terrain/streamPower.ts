@@ -471,6 +471,8 @@ export interface AE3Guidance {
   valleyDepth: Float32Array;      // target valley depth
 }
 
+import { type LateralErosionParams, DEFAULT_LATERAL } from './erodedTerrain';
+
 export function streamPowerErosion(
   grid: Float32Array, w: number, h: number,
   cellSize: number, params: StreamPowerParams,
@@ -478,6 +480,7 @@ export function streamPowerErosion(
   onProgress?: (iteration: number) => void,
   aeChannelStrength?: Float32Array,
   aeGuidance?: AE3Guidance,
+  lateralParams?: LateralErosionParams,
 ): StreamPowerResult {
   const { iterations, erosionK, areaExponent, slopeExponent, dt,
           diffusionRate, minSlope, upliftRate, maxErosion,
@@ -789,16 +792,25 @@ export function streamPowerErosion(
       }
     }
 
-    // Step 3b: Lateral erosion / bank erosion / canyon widening (H2.2a)
-    // Multi-cell lateral reach: erode steep banks up to 3 cells perpendicular to flow.
-    // Uses bank SLOPE (not absolute height) as trigger — scale-independent.
-    // Stronger erosion near escarpment rims (high local relief).
+    // Step 3b: Lateral erosion / canyon widening (H2.5b — selective notch-basin retreat)
+    // Only applies strong widening to cells in the dominant drainage trunk system.
+    // Uses directional rim detection (plateau-side relief) instead of generic local relief.
+    // Separates headcut retreat (upstream incision boost) from sidewall widening.
     {
-      let lateralRate = 0.35;
-      let bankSlopeThreshold = 0.5;
-      const minChannelArea = 20.0;
-      let maxReach = 4;
+      const lp = lateralParams ?? DEFAULT_LATERAL;
+      const lateralRate = lp.lateralRate;
+      const bankSlopeThreshold = lp.bankSlopeThreshold;
+      const minChannelArea = lp.minChannelArea;
+      const maxReach = lp.maxReach;
       const lateralBuf = new Float32Array(n);
+
+      // H2.5b: Find the dominant trunk drainage area for selectivity gating.
+      // Only cells with area >= trunkThreshold * maxArea get strong widening.
+      let maxArea = 0;
+      for (let i = 0; i < n; i++) {
+        if (area[i] > maxArea) maxArea = area[i];
+      }
+      const trunkThreshold = maxArea * 0.05; // top 5% of drainage area = trunk system
 
       for (let z = 3; z < h - 3; z++) {
         for (let x = 3; x < w - 3; x++) {
@@ -808,30 +820,80 @@ export function streamPowerErosion(
 
           const hHere = grid[idx];
 
-          // Flow direction for perpendicular bank identification
-          const recv = receiver[idx];
-          if (recv < 0 || recv === idx) continue;
-          const rx = recv % w;
-          const rz = (recv - rx) / w;
-          const fdx = rx - x;
-          const fdz = rz - z;
-          const flen = Math.sqrt(fdx * fdx + fdz * fdz) || 1;
-          const px = -fdz / flen;
-          const pz = fdx / flen;
+          // Gradient-based flow direction for perpendicular bank identification
+          const dhdx = (grid[idx + 1] - grid[idx - 1]) / (2 * cellSize);
+          const dhdz = (grid[idx + w] - grid[idx - w]) / (2 * cellSize);
+          const gradLen = Math.sqrt(dhdx * dhdx + dhdz * dhdz);
+          if (gradLen < 0.001) continue;
+          const fdx = -dhdx / gradLen;
+          const fdz = -dhdz / gradLen;
+          const px = -fdz;
+          const pz = fdx;
 
-          // Channel power scales with drainage area — stronger channels widen more
-          // AE3.3: Corridor-based lateral erosion bias
+          // Channel power scales with drainage area
           let channelPower = Math.min(4.0, Math.pow(A_here / 60.0, 0.4));
           if (corridor) {
             const guide = corridor[idx];
-            // Boost lateral erosion up to 1.8x in guided corridors
             channelPower *= 1.0 + guide * 0.8;
           }
+
+          // H2.5b: Selectivity — only apply strong widening to trunk system
+          const isTrunk = A_here >= trunkThreshold;
+
+          // H2.5b: Directional rim detection
+          // Measure relief in the UPSTREAM direction (opposite to flow) vs downstream.
+          // True headcut/rim: high terrain upstream (plateau), low downstream (piedmont).
+          // Canyon interior: roughly equal relief on both sides — NOT a rim.
+          let upstreamRelief = 0, downstreamRelief = 0;
+          for (let step = 1; step <= 6; step++) {
+            // Upstream = opposite to flow direction
+            const ux = Math.round(x - fdx * step), uz = Math.round(z - fdz * step);
+            if (ux >= 0 && ux < w && uz >= 0 && uz < h) {
+              const ur = grid[uz * w + ux] - hHere;
+              if (ur > upstreamRelief) upstreamRelief = ur;
+            }
+            // Downstream = along flow direction
+            const dx2 = Math.round(x + fdx * step), dz2 = Math.round(z + fdz * step);
+            if (dx2 >= 0 && dx2 < w && dz2 >= 0 && dz2 < h) {
+              const dr = grid[dz2 * w + dx2] - hHere;
+              if (dr > downstreamRelief) downstreamRelief = dr;
+            }
+          }
+          // rimFactor: high only when upstream relief is high AND downstream relief is low
+          // This distinguishes true rim (plateau behind, drop ahead) from canyon interior
+          const upstreamDominance = upstreamRelief / Math.max(1, upstreamRelief + downstreamRelief);
+          const rimFactor = isTrunk
+            ? Math.min(2.0, (upstreamRelief / 12.0) * upstreamDominance)
+            : 0;  // non-trunk cells get NO rim boost
+
+          // H2.5b: Headcut retreat boost — extra incision at channel heads near the rim
+          // A headcut is where: high upstream relief, channel just barely qualifies, receiver has more area
+          const recv = receiver[idx];
+          if (rimFactor > 0.3 && recv >= 0 && recv !== idx) {
+            const recvArea = area[recv];
+            // Channel head: this cell's area is much less than receiver's (near channel start)
+            const headRatio = A_here / Math.max(1, recvArea);
+            if (headRatio < 0.5 && upstreamRelief > 5) {
+              // Direct headcut incision: bite into the rim
+              const headcutErosion = Math.min(
+                0.5 * rimFactor * upstreamRelief / 20.0 * channelPower * cellSize,
+                upstreamRelief * 0.15,
+              );
+              if (headcutErosion > 0) {
+                lateralBuf[idx] += headcutErosion;
+              }
+            }
+          }
+
+          // Scale lateral rate for trunk cells with rim exposure
+          const localLateralRate = lateralRate * (1.0 + rimFactor * 1.0);
+          const localMaxReach = isTrunk ? maxReach : Math.min(maxReach, 4);
+          const localBankThreshold = bankSlopeThreshold * Math.max(0.5, 1.0 - rimFactor * 0.25);
 
           // Check both bank sides, multiple cells outward
           for (const side of [-1, 1]) {
             let prevH = hHere;
-            for (let reach = 1; reach <= maxReach; reach++) {
+            for (let reach = 1; reach <= localMaxReach; reach++) {
               const bx = Math.round(x + px * side * reach);
               const bz = Math.round(z + pz * side * reach);
               if (bx < 1 || bx >= w - 1 || bz < 1 || bz >= h - 1) break;
@@ -839,27 +901,22 @@ export function streamPowerErosion(
               const bankIdx = bz * w + bx;
               const bankH = grid[bankIdx];
 
-              // Bank slope: height difference over one cell distance
               const bankSlope = (bankH - prevH) / cellSize;
-
-              if (bankSlope < bankSlopeThreshold) break; // bank flattened, stop reaching
+              if (bankSlope < localBankThreshold) break;
 
               const R_bank = resistance ? resistance[bankIdx] : 1.0;
-
-              // Erosion decays with reach (closer to channel = more erosion)
               const reachDecay = 1.0 / reach;
-
-              // Local relief amplification: steeper banks erode faster
-              const slopeExcess = bankSlope - bankSlopeThreshold;
+              const totalRelief = bankH - hHere;
+              const reliefFactor = Math.min(2.0, totalRelief / 10.0);
+              const slopeExcess = bankSlope - localBankThreshold;
 
               const lateralErosion = Math.min(
-                slopeExcess * lateralRate * channelPower * R_bank * reachDecay * cellSize,
-                (bankH - hHere) * 0.35, // H2.2b: cap at 35% of total bank drop
+                slopeExcess * localLateralRate * channelPower * R_bank * reachDecay * reliefFactor * cellSize,
+                totalRelief * 0.35,
               );
 
               if (lateralErosion > 0) {
                 lateralBuf[bankIdx] += lateralErosion;
-                // Bank debris partially becomes sediment
                 if (sedimentFlux) {
                   sedimentFlux[idx] += lateralErosion * 0.25;
                 }

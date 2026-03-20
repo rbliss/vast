@@ -9,8 +9,9 @@ import type { TerrainBakeRequest, TerrainBakeArtifacts, TerrainBakeMetadata } fr
 import { MacroTerrainSource } from '../terrain/macroTerrain';
 import { thermalErosion } from '../terrain/erosion';
 import { streamPowerErosion } from '../terrain/streamPower';
-import { applyChannelGeometry } from '../terrain/channelGeometry';
-import { applyHillslopeTransport } from '../terrain/hillslopeTransport';
+import { type LateralErosionParams, DEFAULT_LATERAL } from '../terrain/erodedTerrain';
+import { applyChannelGeometry, DEFAULT_CHANNEL_PARAMS } from '../terrain/channelGeometry';
+import { applyHillslopeTransport, DEFAULT_HILLSLOPE_PARAMS } from '../terrain/hillslopeTransport';
 import { applyFanDeposition } from '../terrain/fanDeposition';
 import { applyTerraceFormation } from '../terrain/terraceFormation';
 import { generateResistanceGrid } from '../terrain/resistanceField';
@@ -103,12 +104,17 @@ export function executeBake(
   let tStreamPower = 0;
   if (erosion.streamPower.enabled) {
     const t = performance.now();
+    // Build lateral params from erosion config override
+    const lateralOverride: LateralErosionParams | undefined = erosion.lateral
+      ? { ...DEFAULT_LATERAL, ...erosion.lateral }
+      : undefined;
+
     spResult = streamPowerErosion(grid, n, n, cellSize, erosion.streamPower, resistanceGen, undefined, undefined, aeGuidance ? {
       channelStrength: aeGuidance.channelStrength,
       distToChannel: aeGuidance.distToChannel,
       valleyWidth: aeGuidance.valleyWidth,
       valleyDepth: aeGuidance.valleyDepth,
-    } : undefined);
+    } : undefined, lateralOverride);
     tStreamPower = performance.now() - t;
     console.log(`[bake] stream-power: ${erosion.streamPower.iterations} iterations (${tStreamPower.toFixed(0)}ms)`);
   }
@@ -119,7 +125,11 @@ export function executeBake(
   if (spResult) {
     const postChannelResistance = resistanceGen(grid);
     const tChan0 = performance.now();
-    applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize, undefined, postChannelResistance, aeGuidance?.valleyWidth);
+    // Merge channel geometry overrides from erosion config
+    const channelGeoParams = erosion.channelGeometry
+      ? { ...DEFAULT_CHANNEL_PARAMS, ...erosion.channelGeometry }
+      : undefined;
+    applyChannelGeometry(grid, spResult.area, spResult.receiver, n, n, cellSize, channelGeoParams, postChannelResistance, aeGuidance?.valleyWidth);
     console.log(`[bake] channel geometry (${(performance.now() - tChan0).toFixed(0)}ms)`);
   }
   logStageDiag('after-channel-geometry', grid, initialGrid);
@@ -130,14 +140,18 @@ export function executeBake(
     // Recompute resistance after erosion changed heights
     const postErosionResistance = generateResistanceGrid(grid, n, n, extent, cellSize);
     const tHill0 = performance.now();
-    applyHillslopeTransport(grid, n, n, cellSize, undefined, postErosionResistance);
+    // Merge hillslope overrides from erosion config
+    const hillslopeParams = erosion.hillslope
+      ? { ...DEFAULT_HILLSLOPE_PARAMS, ...erosion.hillslope }
+      : undefined;
+    applyHillslopeTransport(grid, n, n, cellSize, hillslopeParams, postErosionResistance);
     console.log(`[bake] hillslope transport (${(performance.now() - tHill0).toFixed(0)}ms)`);
   }
   logStageDiag('after-hillslope', grid, initialGrid);
   onStageCapture?.('after-hillslope', new Float32Array(grid));
 
   // ── Stage 2d: Terrace / bench formation ──
-  if (spResult) {
+  if (spResult && erosion.terraces?.enabled !== false) {
     const tTerr0 = performance.now();
     // Recompute slopes from current heights for terrace detection
     const terrSlopes = new Float32Array(n * n);

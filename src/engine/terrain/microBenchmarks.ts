@@ -16,12 +16,15 @@
  */
 
 import { EditableHeightfield } from './editableHeightfield';
+import type { ErosionConfig } from './erodedTerrain';
 
 export interface MicroBenchmark {
   name: string;
   description: string;
   heightfield: EditableHeightfield;
   camera: { camX: number; camZ: number; clearance: number; tgtX: number; tgtZ: number; tgtClearance: number };
+  /** Optional per-micro erosion config overrides (merged with BENCHMARK_EROSION) */
+  erosionOverrides?: Partial<ErosionConfig>;
 }
 
 const GRID = 256;
@@ -68,6 +71,48 @@ function singleNotch(): MicroBenchmark {
     description: 'Headward incision + rim attack from a single escarpment hollow',
     heightfield: hf,
     camera: { camX: 80, camZ: -80, clearance: 60, tgtX: 0, tgtZ: 0, tgtClearance: 15 },
+    // H2.5a: Codex-specified canyon widening parameters
+    erosionOverrides: {
+      streamPower: {
+        enabled: true,
+        iterations: 120,
+        erosionK: 0.012,
+        areaExponent: 0.45,
+        slopeExponent: 1.15,
+        dt: 1.0,
+        diffusionRate: 0.0005,
+        minSlope: 0.001,
+        upliftRate: 0.0,
+        maxErosion: 3.0,
+        depositionEnabled: true,
+        sedimentFraction: 0.6,
+        transportK: 0.003,
+        transportAreaExp: 0.4,
+        transportSlopeExp: 1.1,
+      },
+      hillslope: {
+        iterations: 20,
+        criticalSlope: 1.25,
+        diffusionRate: 0.003,
+        transferRate: 0.45,
+        debrisReach: 5,
+      },
+      channelGeometry: {
+        minArea: 10,
+        widthCoeff: 0.35,
+        widthExponent: 0.5,
+        depthCoeff: 0.08,
+        depthExponent: 0.4,
+        maxHalfWidth: 20,
+        bankSteepness: 0.7,
+      },
+      lateral: {
+        bankSlopeThreshold: 0.28,
+        lateralRate: 0.85,
+        maxReach: 10,
+        minChannelArea: 30,
+      },
+    },
   };
 }
 
